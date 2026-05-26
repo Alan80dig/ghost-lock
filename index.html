@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost Lock — Sensor Lab</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            background: #0a0a0f;
+            color: #e0e0e0;
+            font-family: 'SF Mono', 'Courier New', monospace;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            letter-spacing: 4px;
+            color: #00ff88;
+            text-shadow: 0 0 20px rgba(0,255,136,0.3);
+        }
+
+        .header p {
+            color: #888;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .panel {
+            background: #12121a;
+            border: 1px solid #2a2a3a;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .panel h2 {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #666;
+            margin-bottom: 16px;
+        }
+
+        .sensor-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .sensor-label {
+            font-size: 14px;
+            color: #aaa;
+            width: 80px;
+        }
+
+        .sensor-value {
+            font-size: 22px;
+            font-weight: bold;
+            color: #00ff88;
+            width: 90px;
+            text-align: right;
+        }
+
+        .bar-container {
+            flex: 1;
+            height: 8px;
+            background: #1a1a2a;
+            border-radius: 4px;
+            margin: 0 12px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #00ccff);
+            border-radius: 4px;
+            transition: width 0.1s ease;
+        }
+
+        .visualizer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+            margin: 16px 0;
+        }
+
+        canvas {
+            background: #0a0a12;
+            border-radius: 12px;
+            border: 1px solid #1a1a2a;
+        }
+
+        .log-preview {
+            background: #08080f;
+            border: 1px solid #1a1a2a;
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 11px;
+            color: #666;
+            font-family: 'SF Mono', monospace;
+            margin-bottom: 12px;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background: #1a1a2a;
+            border: 1px solid #2a2a3a;
+            color: #00ff88;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            letter-spacing: 1px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #22223a;
+            border-color: #00ff88;
+        }
+
+        button.primary {
+            background: #00ff88;
+            color: #0a0a0f;
+            border: none;
+            font-weight: bold;
+        }
+
+        button.primary:hover {
+            background: #00cc66;
+        }
+
+        .status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status.active {
+            background: #00ff88;
+            box-shadow: 0 0 10px #00ff88;
+        }
+
+        .status.inactive {
+            background: #ff4444;
+            box-shadow: 0 0 10px #ff4444;
+        }
+
+        .format-selector {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .format-btn {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .format-btn.selected {
+            background: #00ff88;
+            color: #0a0a0f;
+            border-color: #00ff88;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>👻 GHOST LOCK</h1>
+        <p>SENSOR LAB v1.0</p>
+    </div>
+
+    <!-- Статус сенсоров -->
+    <div class="panel">
+        <h2>📡 Статус</h2>
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <span class="status" id="sensorStatus"></span>
+            <span id="statusText">Запрос доступа к сенсорам...</span>
+        </div>
+        <div style="margin-top: 12px; font-size: 12px; color: #666;">
+            Логов: <span id="logCount">0</span>
+        </div>
+    </div>
+
+    <!-- Данные сенсоров -->
+    <div class="panel">
+        <h2>📐 Ориентация (DeviceOrientation)</h2>
+        <div class="sensor-row">
+            <span class="sensor-label">Pitch</span>
+            <div class="bar-container">
+                <div class="bar-fill" id="pitchBar" style="width: 50%;"></div>
+            </div>
+            <span class="sensor-value" id="pitchValue">--°</span>
+        </div>
+        <div class="sensor-row">
+            <span class="sensor-label">Roll</span>
+            <div class="bar-container">
+                <div class="bar-fill" id="rollBar" style="width: 50%;"></div>
+            </div>
+            <span class="sensor-value" id="rollValue">--°</span>
+        </div>
+        <div class="sensor-row">
+            <span class="sensor-label">Yaw</span>
+            <div class="bar-container">
+                <div class="bar-fill" id="yawBar" style="width: 50%;"></div>
+            </div>
+            <span class="sensor-value" id="yawValue">--°</span>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>⚡ Акселерометр (DeviceMotion)</h2>
+        <div class="sensor-row">
+            <span class="sensor-label">X</span>
+            <div class="bar-container">
+                <div class="bar-fill" id="accelXBar" style="width: 50%; background: #ff8844;"></div>
+            </div>
+            <span class="sensor-value" id="accelX" style="color: #ff8844;">--</span>
+        </div>
+        <div class="sensor-row">
+            <span class="sensor-label">Y</span>
+            <div class="bar-container">
+                <div class="bar-fill" id="accelYBar" style="width: 50%; background: #44aaff;"></div>
+            </div>
+            <span class="sensor-value" id="accelY" style="color: #44aaff;">--</span>
+        </div>
+        <div class="sensor-row">
+            <span class="sensor-label">Z</span>
+            <div class="bar-container">
+                <div class="bar-fill" id="accelZBar" style="width: 50%; background: #ff44ff;"></div>
+            </div>
+            <span class="sensor-value" id="accelZ" style="color: #ff44ff;">--</span>
+        </div>
+    </div>
+
+    <!-- Визуализация телефона -->
+    <div class="panel">
+        <h2>📱 Визуализация</h2>
+        <div class="visualizer">
+            <canvas id="phoneCanvas" width="280" height="200"></canvas>
+        </div>
+    </div>
+
+    <!-- Логи -->
+    <div class="panel">
+        <h2>📋 Логи</h2>
+        <div class="log-preview" id="logPreview">
+            Ожидание данных...
+        </div>
+        <div class="format-selector">
+            <button class="format-btn selected" id="csvFormat" onclick="selectFormat('csv')">CSV</button>
+            <button class="format-btn" id="txtFormat" onclick="selectFormat('txt')">TXT</button>
+        </div>
+        <div class="buttons">
+            <button id="startBtn" class="primary" onclick="startLogging()">▶ СТАРТ</button>
+            <button id="stopBtn" onclick="stopLogging()" disabled>⏹ СТОП</button>
+            <button onclick="exportLog()">📥 ЭКСПОРТ</button>
+            <button onclick="clearLog()">🗑 ОЧИСТИТЬ</button>
+        </div>
+    </div>
+
+    <script>
+        // Состояние
+        let logging = false;
+        let logEntries = [];
+        let exportFormat = 'csv';
+        let pitch = 0, roll = 0, yaw = 0;
+        let accelX = 0, accelY = 0, accelZ = 0;
+        let hasOrientation = false;
+        let hasMotion = false;
+
+        // Выбор формата
+        function selectFormat(format) {
+            exportFormat = format;
+            document.getElementById('csvFormat').classList.remove('selected');
+            document.getElementById('txtFormat').classList.remove('selected');
+            document.getElementById(format + 'Format').classList.add('selected');
+        }
+
+        // Обновление статуса
+        function updateStatus() {
+            const statusDot = document.getElementById('sensorStatus');
+            const statusText = document.getElementById('statusText');
+            
+            if (hasOrientation || hasMotion) {
+                statusDot.className = 'status active';
+                statusText.textContent = 'Сенсоры активны';
+            } else {
+                statusDot.className = 'status inactive';
+                statusText.textContent = 'Ожидание данных...';
+            }
+        }
+
+        // DeviceOrientation
+        window.addEventListener('deviceorientation', (event) => {
+            if (event.alpha !== null) {
+                pitch = event.beta || 0;   // -180 to 180
+                roll = event.gamma || 0;   // -90 to 90
+                yaw = event.alpha || 0;    // 0 to 360
+                hasOrientation = true;
+                updateStatus();
+                updateDisplay();
+            }
+        });
+
+        // DeviceMotion
+        window.addEventListener('devicemotion', (event) => {
+            if (event.accelerationIncludingGravity) {
+                accelX = event.accelerationIncludingGravity.x || 0;
+                accelY = event.accelerationIncludingGravity.y || 0;
+                accelZ = event.accelerationIncludingGravity.z || 0;
+                hasMotion = true;
+                updateStatus();
+                updateDisplay();
+            }
+        });
+
+        // Обновление интерфейса
+        function updateDisplay() {
+            // Pitch
+            const pitchNorm = (pitch + 90) / 180; // 0 to 1 (0° = flat)
+            document.getElementById('pitchValue').textContent = pitch.toFixed(1) + '°';
+            document.getElementById('pitchBar').style.width = (pitchNorm * 100) + '%';
+
+            // Roll
+            const rollNorm = (roll + 90) / 180;
+            document.getElementById('rollValue').textContent = roll.toFixed(1) + '°';
+            document.getElementById('rollBar').style.width = (rollNorm * 100) + '%';
+
+            // Yaw
+            const yawNorm = yaw / 360;
+            document.getElementById('yawValue').textContent = yaw.toFixed(1) + '°';
+            document.getElementById('yawBar').style.width = (yawNorm * 100) + '%';
+
+            // Акселерометр (нормализация примерно к g)
+            const maxG = 12;
+            document.getElementById('accelX').textContent = accelX.toFixed(2);
+            document.getElementById('accelXBar').style.width = ((accelX / maxG + 1) / 2 * 100) + '%';
+            document.getElementById('accelY').textContent = accelY.toFixed(2);
+            document.getElementById('accelYBar').style.width = ((accelY / maxG + 1) / 2 * 100) + '%';
+            document.getElementById('accelZ').textContent = accelZ.toFixed(2);
+            document.getElementById('accelZBar').style.width = ((accelZ / maxG + 1) / 2 * 100) + '%';
+
+            // Canvas
+            drawPhone();
+
+            // Логирование
+            if (logging) {
+                addLogEntry();
+            }
+        }
+
+        // Отрисовка телефона
+        function drawPhone() {
+            const canvas = document.getElementById('phoneCanvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+            const cx = w / 2;
+            const cy = h / 2;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // Телефон (прямоугольник)
+            const phoneW = 60;
+            const phoneH = 100;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            
+            // Применяем поворот на основе roll
+            ctx.rotate(roll * Math.PI / 180);
+            
+            // Применяем сжатие по pitch
+            const pitchScale = Math.cos(pitch * Math.PI / 180);
+            ctx.scale(1, Math.max(0.2, pitchScale));
+
+            // Корпус телефона
+            ctx.fillStyle = '#1a1a2a';
+            ctx.strokeStyle = '#00ff88';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(-phoneW/2, -phoneH/2, phoneW, phoneH, 8);
+            ctx.fill();
+            ctx.stroke();
+
+            // Экран
+            const screenMargin = 8;
+            ctx.fillStyle = pitch < -30 ? '#0a0a12' : '#1a3a2a';
+            ctx.fillRect(-phoneW/2 + screenMargin, -phoneH/2 + screenMargin, 
+                        phoneW - screenMargin*2, phoneH - screenMargin*2);
+
+            // Индикатор "экрана" - замок если pitch < -30
+            if (pitch < -30) {
+                ctx.fillStyle = '#ff4444';
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('🔒', 0, 5);
+            }
+
+            ctx.restore();
+
+            // Подписи
+            ctx.fillStyle = '#666';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Pitch: ${pitch.toFixed(0)}°`, cx, h - 20);
+            ctx.fillText(`Roll: ${roll.toFixed(0)}°`, cx, h - 5);
+        }
+
+        // Логирование
+        function addLogEntry() {
+            const entry = {
+                timestamp: new Date().toISOString(),
+                pitch: pitch,
+                roll: roll,
+                yaw: yaw,
+                accelX: accelX,
+                accelY: accelY,
+                accelZ: accelZ
+            };
+            logEntries.push(entry);
+            
+            // Ограничим превью
+            if (logEntries.length <= 5) {
+                updateLogPreview();
+            } else if (logEntries.length % 10 === 0) {
+                updateLogPreview();
+            }
+            
+            document.getElementById('logCount').textContent = logEntries.length;
+        }
+
+        function updateLogPreview() {
+            const preview = document.getElementById('logPreview');
+            const lastEntries = logEntries.slice(-5);
+            preview.innerHTML = lastEntries.map(e => 
+                `${e.timestamp.slice(11, 19)} | P:${e.pitch.toFixed(1).padStart(5)} R:${e.roll.toFixed(1).padStart(5)} Y:${e.yaw.toFixed(1).padStart(5)}`
+            ).join('\n') || 'Ожидание данных...';
+        }
+
+        // Управление логированием
+        function startLogging() {
+            logging = true;
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            updateLogPreview();
+        }
+
+        function stopLogging() {
+            logging = false;
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+        }
+
+        function clearLog() {
+            logEntries = [];
+            document.getElementById('logCount').textContent = '0';
+            document.getElementById('logPreview').innerHTML = 'Ожидание данных...';
+        }
+
+        // Экспорт
+        function exportLog() {
+            if (logEntries.length === 0) {
+                alert('Нет данных для экспорта. Начните логирование.');
+                return;
+            }
+
+            let content, filename, mimeType;
+            
+            if (exportFormat === 'csv') {
+                // CSV
+                const headers = 'timestamp,pitch,roll,yaw,accelX,accelY,accelZ\n';
+                const rows = logEntries.map(e => 
+                    `${e.timestamp},${e.pitch},${e.roll},${e.yaw},${e.accelX},${e.accelY},${e.accelZ}`
+                ).join('\n');
+                content = headers + rows;
+                filename = 'ghost-lock-data.csv';
+                mimeType = 'text/csv';
+            } else {
+                // TXT — человекочитаемая таблица
+                const lines = [
+                    'Ghost Lock — Sensor Lab',
+                    '=' .repeat(60),
+                    'Timestamp                | Pitch   | Roll    | Yaw     | AccelX  | AccelY  | AccelZ',
+                    '-' .repeat(60),
+                    ...logEntries.map(e => 
+                        `${e.timestamp.slice(0, 23).padEnd(24)} | ${e.pitch.toFixed(1).padStart(6)}  | ${e.roll.toFixed(1).padStart(6)}  | ${e.yaw.toFixed(1).padStart(6)}  | ${e.accelX.toFixed(2).padStart(6)}  | ${e.accelY.toFixed(2).padStart(6)}  | ${e.accelZ.toFixed(2).padStart(6)}`
+                    ),
+                    '-' .repeat(60),
+                    `Всего записей: ${logEntries.length}`
+                ];
+                content = lines.join('\n');
+                filename = 'ghost-lock-data.txt';
+                mimeType = 'text/plain';
+            }
+
+            // Скачивание
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // iOS 13+ permission
+        if (typeof DeviceOrientationEvent !== 'undefined' && 
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+            document.body.innerHTML += `
+                <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+                            background: rgba(0,0,0,0.9); display: flex; align-items: center; 
+                            justify-content: center; z-index: 999;">
+                    <div style="background: #12121a; padding: 32px; border-radius: 16px; 
+                                text-align: center; border: 1px solid #2a2a3a;">
+                        <h2 style="color:#00ff88; margin-bottom:16px;">👻 Ghost Lock</h2>
+                        <p style="color:#aaa; margin-bottom:24px;">Нужен доступ к датчикам движения<br>для сбора данных</p>
+                        <button onclick="requestPermission()" 
+                                style="background:#00ff88; color:#000; border:none; padding:16px 32px; 
+                                       border-radius:8px; font-size:16px; cursor:pointer;">
+                            РАЗРЕШИТЬ ДОСТУП
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function requestPermission() {
+            DeviceOrientationEvent.requestPermission()
+                .then(response => {
+                    if (response === 'granted') {
+                        location.reload();
+                    } else {
+                        alert('Доступ к датчикам отклонён. Приложение не будет работать.');
+                    }
+                })
+                .catch(console.error);
+        }
+    </script>
+</body>
+</html>
