@@ -7,14 +7,13 @@
     android:background="#0a0a0f"
     android:padding="24dp">
 
-    <com.google.android.material.tabs.TabLayout
+    <LinearLayout
         android:id="@+id/tabLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="48dp"
-        app:tabBackground="@drawable/tab_selector"
-        app:tabGravity="center"
-        app:tabIndicatorHeight="0dp" />
+        android:gravity="center"
+        android:orientation="horizontal" />
 
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/viewPager"
