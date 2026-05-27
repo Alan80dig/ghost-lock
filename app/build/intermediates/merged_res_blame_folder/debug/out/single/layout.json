@@ -1,0 +1,14 @@
+[
+    {
+        "merged": "com.ghostlock.app-mergeDebugResources-30:/layout/activity_settings.xml",
+        "source": "com.ghostlock.app-main-33:/layout/activity_settings.xml"
+    },
+    {
+        "merged": "com.ghostlock.app-mergeDebugResources-30:/layout/item_onboarding_page.xml",
+        "source": "com.ghostlock.app-main-33:/layout/item_onboarding_page.xml"
+    },
+    {
+        "merged": "com.ghostlock.app-mergeDebugResources-30:/layout/activity_onboarding.xml",
+        "source": "com.ghostlock.app-main-33:/layout/activity_onboarding.xml"
+    }
+]
