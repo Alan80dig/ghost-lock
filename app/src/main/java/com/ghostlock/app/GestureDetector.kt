@@ -82,16 +82,18 @@ class GestureDetector(private val context: Context) {
     }
 
     private fun isCallActive(): Boolean {
-        return try {
-            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    return try {
+        val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        if (tm != null && am != null) {
             tm.callState != TelephonyManager.CALL_STATE_IDLE ||
-                    am.mode == AudioManager.MODE_IN_COMMUNICATION ||
-                    am.mode == AudioManager.MODE_IN_CALL
-        } catch (e: Exception) {
-            false
-        }
+                am.mode == AudioManager.MODE_IN_COMMUNICATION ||
+                am.mode == AudioManager.MODE_IN_CALL
+        } else false
+    } catch (e: SecurityException) {
+        false
     }
+}
 
     private fun isHorizontalPhoto(pitch: Float, roll: Float): Boolean {
         // Телефон горизонтально (как при фото) — не блокируем

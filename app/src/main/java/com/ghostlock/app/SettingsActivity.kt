@@ -34,6 +34,11 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Thread.setDefaultUncaughtExceptionHandler { _, e ->
+         val msg = e.message ?: "unknown"
+         android.util.Log.e("GhostLock", "Crash: $msg", e)
+         Toast.makeText(this, "Ошибка: $msg", Toast.LENGTH_LONG).show()
+         }
         setContentView(R.layout.activity_settings)
 
         switchService = findViewById(R.id.switchService)

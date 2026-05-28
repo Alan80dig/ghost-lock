@@ -1,5 +1,7 @@
 package com.ghostlock.app
 
+import android.os.VibratorManager
+import android.os.Vibrator
 import android.app.*
 import android.app.admin.DevicePolicyManager
 import android.content.*
@@ -53,12 +55,15 @@ class LockService : Service(), SensorEventListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            "START_LISTENING" -> startListening()
-            "STOP_LISTENING" -> stopListening()
-        }
-        return START_STICKY
+    // Сразу показываем уведомление, чтобы не крашиться
+    startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
+    
+    when (intent?.action) {
+        "START_LISTENING" -> startListening()
+        "STOP_LISTENING" -> stopListening()
     }
+    return START_STICKY
+   }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -82,7 +87,7 @@ class LockService : Service(), SensorEventListener {
 
         isListening = true
         justLocked = false
-        startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
+        
     }
 
     private fun stopListening() {
@@ -134,7 +139,14 @@ class LockService : Service(), SensorEventListener {
 
         // Вибрация
         try {
-            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val manager = getSystemService(VibratorManager::class.java)
+            manager.defaultVibrator
+              }       
+         else {
+                 @Suppress("DEPRECATION")
+              getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+               }
             vibrator.vibrate(android.os.VibrationEffect.createOneShot(50, 100))
         } catch (_: Exception) {}
 
