@@ -13,33 +13,12 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="👻 Ghost Lock"
+            android:text="Ghost Lock"
             android:textSize="28sp"
             android:textColor="#00ff88"
             android:layout_marginBottom="24dp" />
 
         <!-- Статус -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="16dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Защита"
-                android:textSize="16sp"
-                android:textColor="#ffffff" />
-
-            <Switch
-                android:id="@+id/switchService"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
-
         <TextView
             android:id="@+id/tvStatus"
             android:layout_width="match_parent"
@@ -55,7 +34,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Настройки"
+            android:text="Настрой перед использованием"
             android:textSize="14sp"
             android:textColor="#666666"
             android:letterSpacing="0.1"
@@ -76,17 +55,49 @@
             android:layout_height="wrap_content"
             android:max="100"
             android:progress="50"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Кнопка Готово -->
+        <Button
+            android:id="@+id/btnDone"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="ГОТОВО"
+            android:textColor="#0a0a0f"
+            android:backgroundTint="#00ff88"
             android:layout_marginBottom="32dp" />
+
+        <!-- Switch отключения -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Отключить защиту"
+                android:textSize="14sp"
+                android:textColor="#ff4444" />
+
+            <Switch
+                android:id="@+id/switchService"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
 
         <!-- Удаление -->
         <Button
             android:id="@+id/btnUninstall"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="Отключить и удалить"
+            android:text="Удалить приложение"
             android:textColor="#ff4444"
             android:backgroundTint="@android:color/transparent"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginTop="16dp" />
 
     </LinearLayout>
 </ScrollView>

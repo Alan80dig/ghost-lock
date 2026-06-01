@@ -1,7 +1,7 @@
 package com.ghostlock.app
 
-import android.app.admin.DevicePolicyManager
-import android.content.*
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,22 +17,8 @@ class OnboardingActivity : AppCompatActivity() {
     private lateinit var btnNext: Button
     private lateinit var btnSkip: Button
 
-    private val adminComponent by lazy {
-        ComponentName(this, AdminReceiver::class.java)
-    }
-
-    private val dpm by lazy {
-        getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        if (dpm.isAdminActive(adminComponent)) {
-            startMainFlow()
-            return
-        }
-
         setContentView(R.layout.activity_onboarding)
 
         viewPager = findViewById(R.id.viewPager)
@@ -42,7 +28,7 @@ class OnboardingActivity : AppCompatActivity() {
         val pages = listOf(
             OnboardingPage("Ghost Lock", "Твой телефон умеет прятаться", "Прижал к себе — экран гаснет.\nПеревернул — экран гаснет.\nУбрал в карман — экран гаснет."),
             OnboardingPage("Естественная защита", "Никаких кнопок", "Телефон сам понимает, когда\nего нужно заблокировать."),
-            OnboardingPage("Нужны разрешения", "Только необходимое", "Блокировка экрана\nДоступ к датчикам\nРабота в фоне")
+            OnboardingPage("Нужны разрешения", "Только необходимое", "Доступ к датчикам\nРабота в фоне\nОптимизация батареи")
         )
 
         viewPager.adapter = OnboardingAdapter(pages)
@@ -65,12 +51,6 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun requestPermissionsAndStart() {
-        if (!dpm.isAdminActive(adminComponent)) {
-            startActivityForResult(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
-                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
-            }, 1001)
-            return
-        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!pm.isIgnoringBatteryOptimizations(packageName)) {
@@ -80,16 +60,6 @@ class OnboardingActivity : AppCompatActivity() {
             }
         }
         startMainFlow()
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1001 && dpm.isAdminActive(adminComponent)) startMainFlow()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (dpm.isAdminActive(adminComponent)) startMainFlow()
     }
 
     private fun startMainFlow() {

@@ -1,9 +1,6 @@
 package com.ghostlock.app
 
-import android.os.VibratorManager
-import android.os.Vibrator
 import android.app.*
-import android.app.admin.DevicePolicyManager
 import android.content.*
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -14,29 +11,33 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 
 class LockService : Service(), SensorEventListener {
 
     private lateinit var sensorManager: SensorManager
-    private lateinit var devicePolicyManager: DevicePolicyManager
-    private lateinit var adminComponent: ComponentName
     private lateinit var detector: GestureDetector
+    private lateinit var overlayManager: OverlayManager
 
     private var isListening = false
     private var justLocked = false
+    private var screenOnTime = 0L
     private val handler = Handler(Looper.getMainLooper())
 
     companion object {
         const val CHANNEL_ID = "ghost_lock_service"
         const val NOTIFICATION_ID = 1
 
+        @Volatile
+        private var instance: LockService? = null
+
+        fun getInstance(): LockService? = instance
+
         fun startIfPermitted(context: Context) {
-            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-            val admin = ComponentName(context, AdminReceiver::class.java)
-            if (dpm.isAdminActive(admin)) {
-                context.startForegroundService(Intent(context, LockService::class.java))
-            }
+            context.startForegroundService(Intent(context, LockService::class.java))
         }
 
         fun stop(context: Context) {
@@ -46,32 +47,41 @@ class LockService : Service(), SensorEventListener {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        devicePolicyManager = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        adminComponent = ComponentName(this, AdminReceiver::class.java)
         detector = GestureDetector(this)
+        overlayManager = OverlayManager(this)
+
+        overlayManager.onTimeout = {
+            updateNotification("Защита активна")
+        }
 
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    // Сразу показываем уведомление, чтобы не крашиться
-    startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
-    
-    when (intent?.action) {
-        "START_LISTENING" -> startListening()
-        "STOP_LISTENING" -> stopListening()
+        startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
+
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (pm.isInteractive) {
+            screenOnTime = System.currentTimeMillis()
+            startListening()
+        }
+
+        when (intent?.action) {
+            "START_LISTENING" -> {
+                screenOnTime = System.currentTimeMillis()
+                startListening()
+            }
+            "STOP_LISTENING" -> stopListening()
+        }
+        return START_STICKY
     }
-    return START_STICKY
-   }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // --- Сенсоры ---
-
     private fun startListening() {
         if (isListening) return
-        if (!devicePolicyManager.isAdminActive(adminComponent)) return
 
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
@@ -87,7 +97,6 @@ class LockService : Service(), SensorEventListener {
 
         isListening = true
         justLocked = false
-        
     }
 
     private fun stopListening() {
@@ -96,7 +105,9 @@ class LockService : Service(), SensorEventListener {
         detector.clear()
     }
 
-    // --- Обработка сенсоров ---
+    fun updateSensitivity(level: Int) {
+        detector.updateSensitivity(level)
+    }
 
     private var pitch = 0f
     private var roll = 0f
@@ -105,7 +116,9 @@ class LockService : Service(), SensorEventListener {
     private var az = 0f
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (justLocked || !isListening) return
+        if (!isListening) return
+
+        if (System.currentTimeMillis() - screenOnTime < 3000) return
 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
@@ -123,48 +136,48 @@ class LockService : Service(), SensorEventListener {
             }
         }
 
-        // Проверяем жест только когда есть оба сенсора
+        // Оверлей активен — ждём жест снятия
+        if (overlayManager.isShowing()) {
+            if (pitch in -45f..45f && roll in -45f..45f) {
+                dismissOverlay()
+            }
+            return
+        }
+
+        if (justLocked) return
+
         val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az)
         if (gesture != null) {
-            triggerLock()
+            triggerOverlay()
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    // --- Блокировка ---
-
-    private fun triggerLock() {
+    private fun triggerOverlay() {
+        if (justLocked) return
         justLocked = true
 
-        // Вибрация
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = getSystemService(VibratorManager::class.java)
-            manager.defaultVibrator
-              }       
-         else {
-                 @Suppress("DEPRECATION")
-              getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-               }
-            vibrator.vibrate(android.os.VibrationEffect.createOneShot(50, 100))
+                val manager = getSystemService(VibratorManager::class.java)
+                manager.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            vibrator.vibrate(VibrationEffect.createOneShot(50, 100))
         } catch (_: Exception) {}
 
-        // Блокировка экрана
-        devicePolicyManager.lockNow()
-
-        // Обновляем уведомление
-        updateNotification("Экран заблокирован жестом")
-
-        // Через 1 секунду отключаем сенсоры (на случай если SCREEN_OFF задержался)
-        handler.postDelayed({
-            stopListening()
-            // Оставляем сервис живым, но без прослушки
-            updateNotification("Защита активна")
-        }, 1000)
+        overlayManager.show()
+        updateNotification("Заглушка активна")
     }
 
-    // --- Уведомление ---
+    private fun dismissOverlay() {
+        overlayManager.hide()
+        justLocked = false
+        updateNotification("Защита активна")
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -207,6 +220,8 @@ class LockService : Service(), SensorEventListener {
     }
 
     override fun onDestroy() {
+        instance = null
+        overlayManager.destroy()
         stopListening()
         super.onDestroy()
     }

@@ -1,14 +1,11 @@
 package com.ghostlock.app
 
-import android.app.admin.DevicePolicyManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
-import android.provider.Settings
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 
@@ -18,15 +15,8 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var seekSensitivity: SeekBar
     private lateinit var tvSensitivityLabel: TextView
+    private lateinit var btnDone: Button
     private lateinit var btnUninstall: Button
-
-    private val adminComponent by lazy {
-        ComponentName(this, AdminReceiver::class.java)
-    }
-
-    private val dpm by lazy {
-        getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-    }
 
     private val prefs by lazy {
         getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
@@ -34,28 +24,25 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Thread.setDefaultUncaughtExceptionHandler { _, e ->
-         val msg = e.message ?: "unknown"
-         android.util.Log.e("GhostLock", "Crash: $msg", e)
-         Toast.makeText(this, "Ошибка: $msg", Toast.LENGTH_LONG).show()
-         }
         setContentView(R.layout.activity_settings)
 
         switchService = findViewById(R.id.switchService)
         tvStatus = findViewById(R.id.tvStatus)
         seekSensitivity = findViewById(R.id.seekSensitivity)
         tvSensitivityLabel = findViewById(R.id.tvSensitivityLabel)
+        btnDone = findViewById(R.id.btnDone)
         btnUninstall = findViewById(R.id.btnUninstall)
 
         setupUI()
     }
 
     private fun setupUI() {
-        // Статус
         updateStatus()
 
-        // Переключатель сервиса
+        val isServiceEnabled = prefs.getBoolean("service_enabled", true)
+        switchService.isChecked = isServiceEnabled
         switchService.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("service_enabled", isChecked).apply()
             if (isChecked) {
                 LockService.startIfPermitted(this)
             } else {
@@ -64,7 +51,6 @@ class SettingsActivity : AppCompatActivity() {
             updateStatus()
         }
 
-        // Чувствительность
         val sensitivity = prefs.getInt("sensitivity", 50)
         seekSensitivity.progress = sensitivity
         updateSensitivityLabel(sensitivity)
@@ -77,19 +63,18 @@ class SettingsActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 seekBar?.let {
                     prefs.edit().putInt("sensitivity", it.progress).apply()
+                    LockService.getInstance()?.updateSensitivity(it.progress)
                 }
             }
         })
 
-        // Удаление
+        btnDone.setOnClickListener {
+            LockService.startIfPermitted(this)
+            finish()
+        }
+
         btnUninstall.setOnClickListener {
-            // Снимаем админ-права
-            if (dpm.isAdminActive(adminComponent)) {
-                dpm.removeActiveAdmin(adminComponent)
-            }
-            // Останавливаем сервис
             LockService.stop(this)
-            // Системное удаление
             val intent = Intent(Intent.ACTION_DELETE).apply {
                 data = Uri.parse("package:$packageName")
             }
@@ -98,27 +83,25 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun updateStatus() {
-        val isAdmin = dpm.isAdminActive(adminComponent)
         val batteryOptimized = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             pm.isIgnoringBatteryOptimizations(packageName)
         } else true
 
-        switchService.isChecked = isAdmin
+        val serviceEnabled = prefs.getBoolean("service_enabled", true)
 
         tvStatus.text = buildString {
-            append("Права админа: ${if (isAdmin) "✅" else "❌"}\n")
             append("Батарея: ${if (batteryOptimized) "✅" else "⚠️"}\n")
-            append("Сервис: ${if (isAdmin) "🟢 Активен" else "🔴 Остановлен"}")
+            append("Защита: ${if (serviceEnabled) "🟢 Активна" else "🔴 Отключена"}")
         }
     }
 
     private fun updateSensitivityLabel(progress: Int) {
         val label = when (progress) {
-            in 0..25 -> "Низкая (только резкие движения)"
+            in 0..25 -> "Низкая"
             in 26..50 -> "Средняя"
             in 51..75 -> "Высокая"
-            else -> "Максимальная (реагирует на всё)"
+            else -> "Максимальная"
         }
         tvSensitivityLabel.text = "Чувствительность: $label"
     }
