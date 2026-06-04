@@ -12,13 +12,9 @@ class ScreenStateReceiver : BroadcastReceiver() {
                 LockService.startIfPermitted(context)
             }
             Intent.ACTION_SCREEN_OFF -> {
-                val stopIntent = Intent(context, LockService::class.java).apply {
-                    action = "STOP_LISTENING"
-                }
-                context.startService(stopIntent)
+                LockService.getInstance()?.onScreenOff()
             }
             Intent.ACTION_BOOT_COMPLETED -> {
-                // После перезагрузки — запускаем, если права есть
                 LockService.startIfPermitted(context)
             }
         }

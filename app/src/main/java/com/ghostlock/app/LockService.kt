@@ -56,6 +56,12 @@ class LockService : Service(), SensorEventListener {
             updateNotification("Защита активна")
         }
 
+        overlayManager.onDismiss = {
+            justLocked = false
+            screenOnTime = System.currentTimeMillis()
+            updateNotification("Защита активна")
+        }
+
         createNotificationChannel()
     }
 
@@ -74,11 +80,21 @@ class LockService : Service(), SensorEventListener {
                 startListening()
             }
             "STOP_LISTENING" -> stopListening()
+            "STOP_SERVICE" -> {
+                stopListening()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    fun onScreenOff() {
+        overlayManager.hide()
+        justLocked = false
+    }
 
     private fun startListening() {
         if (isListening) return
@@ -118,7 +134,7 @@ class LockService : Service(), SensorEventListener {
     override fun onSensorChanged(event: SensorEvent) {
         if (!isListening) return
 
-        if (System.currentTimeMillis() - screenOnTime < 3000) return
+        if (System.currentTimeMillis() - screenOnTime < 5000) return
 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
@@ -136,13 +152,7 @@ class LockService : Service(), SensorEventListener {
             }
         }
 
-        // Оверлей активен — ждём жест снятия
-        if (overlayManager.isShowing()) {
-            if (pitch in -45f..45f && roll in -45f..45f) {
-                dismissOverlay()
-            }
-            return
-        }
+        if (overlayManager.isShowing()) return
 
         if (justLocked) return
 
@@ -173,12 +183,6 @@ class LockService : Service(), SensorEventListener {
         updateNotification("Заглушка активна")
     }
 
-    private fun dismissOverlay() {
-        overlayManager.hide()
-        justLocked = false
-        updateNotification("Защита активна")
-    }
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -196,7 +200,7 @@ class LockService : Service(), SensorEventListener {
 
     private fun buildNotification(text: String): Notification {
         val stopIntent = Intent(this, LockService::class.java).apply {
-            action = "STOP_LISTENING"
+            action = "STOP_SERVICE"
         }
         val stopPendingIntent = PendingIntent.getService(
             this, 0, stopIntent,

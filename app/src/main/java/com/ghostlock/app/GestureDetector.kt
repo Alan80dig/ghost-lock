@@ -11,7 +11,6 @@ class GestureDetector(private val context: Context) {
     private val rollWindow = CircularBuffer(10)
     private val accelZWindow = CircularBuffer(10)
 
-    // Изменяемые пороги
     private var rollThreshold = 55f
     private var pitchThreshold = 70f
     private var accelYThreshold = 3f
@@ -31,22 +30,22 @@ class GestureDetector(private val context: Context) {
 
     fun updateSensitivity(level: Int) {
         rollThreshold = when (level) {
-            in 0..25 -> 65f
-            in 26..50 -> 55f
-            in 51..75 -> 45f
-            else -> 35f
+            in 0..25 -> 55f
+            in 26..50 -> 40f
+            in 51..75 -> 30f
+            else -> 20f
         }
         pitchThreshold = when (level) {
-            in 0..25 -> 90f
-            in 26..50 -> 70f
-            in 51..75 -> 50f
-            else -> 35f
+            in 0..25 -> 80f
+            in 26..50 -> 55f
+            in 51..75 -> 40f
+            else -> 25f
         }
         accelYThreshold = when (level) {
-            in 0..25 -> 5f
-            in 26..50 -> 3f
-            in 51..75 -> 2f
-            else -> 1.5f
+            in 0..25 -> 4f
+            in 26..50 -> 2.5f
+            in 51..75 -> 1.5f
+            else -> 1f
         }
         cooldownMs = when (level) {
             in 0..25 -> 5000L
@@ -57,7 +56,7 @@ class GestureDetector(private val context: Context) {
     }
 
     fun onSensorChanged(pitch: Float, roll: Float, ax: Float, ay: Float, az: Float): String? {
-        
+        if (isCallActive()) return null
         if (isHorizontalPhoto(pitch, roll)) return null
 
         pitchWindow.add(pitch)
@@ -69,7 +68,6 @@ class GestureDetector(private val context: Context) {
         val rollSpeed = calculateSpeed(rollWindow)
         val rollStable = checkStability(roll)
 
-        // Прижал к себе
         val azDelta = abs(az - (accelZWindow.toList().lastOrNull() ?: 0f))
         if ((ay > accelYThreshold || azDelta > 30) && abs(pitch) > pitchThreshold) {
             return if (cooldownPassed()) "GRAB_SELF" else null
@@ -77,35 +75,43 @@ class GestureDetector(private val context: Context) {
 
         if (abs(roll) < rollThreshold) return null
 
-        // Переворот на столе
         if (abs(ax) < tableAccel && abs(ay) < tableAccel && abs(pitch) > tablePitch) {
             return if (cooldownPassed()) "FLIP_TABLE" else null
         }
 
-        // Переворот в руке
         if (rollSpeed > rollSpeedFlip && abs(az) > accelZFlip) {
             return if (cooldownPassed()) "FLIP_HAND" else null
         }
 
-        // Левый карман
         if (rollStable && roll < -80f && ax > 5f) {
             return if (cooldownPassed()) "POCKET_LEFT" else null
         }
 
-        // Правый карман
         if (rollStable && roll > 80f && ax < -5f) {
             return if (cooldownPassed()) "POCKET_RIGHT" else null
         }
 
-        // Задний карман
         if (rollSpeed in rollSpeedPocketMin..rollSpeedPocketMax && abs(az) > accelZThreshold) {
             return if (cooldownPassed()) "POCKET_BACK" else null
         }
 
         return null
-      }
+    }
 
-   
+    private fun isCallActive(): Boolean {
+        return try {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (tm != null && am != null) {
+                tm.callState != TelephonyManager.CALL_STATE_IDLE ||
+                    am.mode == AudioManager.MODE_IN_COMMUNICATION ||
+                    am.mode == AudioManager.MODE_IN_CALL
+            } else false
+        } catch (e: SecurityException) {
+            false
+        }
+    }
+
     private fun isHorizontalPhoto(pitch: Float, roll: Float): Boolean {
         return abs(pitch) < 30f && abs(roll) in 45f..90f
     }
@@ -146,7 +152,6 @@ class GestureDetector(private val context: Context) {
     }
 }
 
-// Простой кольцевой буфер
 class CircularBuffer(private val capacity: Int) {
     private val data = FloatArray(capacity)
     private var writeIndex = 0

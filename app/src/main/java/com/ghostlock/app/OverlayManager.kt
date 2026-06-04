@@ -18,6 +18,7 @@ class OverlayManager(private val context: Context) {
     private var timeoutRunnable: Runnable? = null
 
     var onTimeout: (() -> Unit)? = null
+    var onDismiss: (() -> Unit)? = null
 
     fun show() {
         if (overlayView != null) return
@@ -26,9 +27,7 @@ class OverlayManager(private val context: Context) {
         overlayView = View(context).apply {
             setBackgroundColor(0xFF000000.toInt())
             setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    // Перехватываем касание
-                }
+                if (event.action == MotionEvent.ACTION_DOWN) {}
                 true
             }
         }
@@ -62,6 +61,7 @@ class OverlayManager(private val context: Context) {
         }
         overlayView = null
         stopTimeout()
+        onDismiss?.invoke()
     }
 
     fun isShowing(): Boolean = overlayView != null
@@ -72,7 +72,7 @@ class OverlayManager(private val context: Context) {
             hide()
             onTimeout?.invoke()
         }
-        handler.postDelayed(timeoutRunnable!!, 15_000)
+        handler.postDelayed(timeoutRunnable!!, 60_000)
     }
 
     private fun stopTimeout() {
