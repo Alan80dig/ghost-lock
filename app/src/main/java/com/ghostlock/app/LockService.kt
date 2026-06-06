@@ -34,9 +34,13 @@ class LockService : Service(), SensorEventListener {
         @Volatile
         private var instance: LockService? = null
 
+        @Volatile
+        var stoppedByUser = false
+
         fun getInstance(): LockService? = instance
 
         fun startIfPermitted(context: Context) {
+            if (stoppedByUser) return
             context.startForegroundService(Intent(context, LockService::class.java))
         }
 
@@ -53,6 +57,11 @@ class LockService : Service(), SensorEventListener {
         overlayManager = OverlayManager(this)
 
         overlayManager.onTimeout = {
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                val method = PowerManager::class.java.getMethod("goToSleep", Long::class.java)
+                method.invoke(pm, System.currentTimeMillis())
+            } catch (_: Exception) {}
             updateNotification("Защита активна")
         }
 
@@ -81,6 +90,7 @@ class LockService : Service(), SensorEventListener {
             }
             "STOP_LISTENING" -> stopListening()
             "STOP_SERVICE" -> {
+                stoppedByUser = true
                 stopListening()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -150,6 +160,14 @@ class LockService : Service(), SensorEventListener {
                 pitch = Math.toDegrees(orientation[1].toDouble()).toFloat()
                 roll = Math.toDegrees(orientation[2].toDouble()).toFloat()
             }
+        }
+
+        // Скрыть оверлей если экран выключен
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (overlayManager.isShowing() && !pm.isInteractive) {
+            overlayManager.hide()
+            justLocked = false
+            return
         }
 
         if (overlayManager.isShowing()) return

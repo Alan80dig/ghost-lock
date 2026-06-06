@@ -44,8 +44,10 @@ class SettingsActivity : AppCompatActivity() {
         switchService.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("service_enabled", isChecked).apply()
             if (isChecked) {
+                LockService.stoppedByUser = false
                 LockService.startIfPermitted(this)
             } else {
+                LockService.stoppedByUser = true
                 LockService.stop(this)
             }
             updateStatus()
@@ -69,6 +71,7 @@ class SettingsActivity : AppCompatActivity() {
         })
 
         btnDone.setOnClickListener {
+            LockService.stoppedByUser = false
             LockService.startIfPermitted(this)
             finish()
         }
