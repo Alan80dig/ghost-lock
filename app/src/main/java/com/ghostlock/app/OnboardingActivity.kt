@@ -51,13 +51,15 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun requestPermissionsAndStart() {
+        // Запрос игнорирования оптимизации батареи
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                })
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
             }
+            startActivity(intent)
+           }
         }
         startMainFlow()
     }

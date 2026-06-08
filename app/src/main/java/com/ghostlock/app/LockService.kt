@@ -23,6 +23,7 @@ class LockService : Service(), SensorEventListener {
     private lateinit var overlayManager: OverlayManager
 
     private var isListening = false
+    private var isProximityNear = false
     private var justLocked = false
     private var screenOnTime = 0L
     private val handler = Handler(Looper.getMainLooper())
@@ -57,11 +58,6 @@ class LockService : Service(), SensorEventListener {
         overlayManager = OverlayManager(this)
 
         overlayManager.onTimeout = {
-            try {
-                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-                val method = PowerManager::class.java.getMethod("goToSleep", Long::class.java)
-                method.invoke(pm, System.currentTimeMillis())
-            } catch (_: Exception) {}
             updateNotification("Защита активна")
         }
 
@@ -111,15 +107,18 @@ class LockService : Service(), SensorEventListener {
 
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-
+        val proximity = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        proximity?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
         if (accel == null && rotation == null) return
 
         accel?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
-        }
+             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            }
         rotation?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
-        }
+            }
 
         isListening = true
         justLocked = false
@@ -144,7 +143,7 @@ class LockService : Service(), SensorEventListener {
     override fun onSensorChanged(event: SensorEvent) {
         if (!isListening) return
 
-        if (System.currentTimeMillis() - screenOnTime < 5000) return
+        if (System.currentTimeMillis() - screenOnTime < 2000) return
 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
@@ -159,6 +158,10 @@ class LockService : Service(), SensorEventListener {
                 SensorManager.getOrientation(rotationMatrix, orientation)
                 pitch = Math.toDegrees(orientation[1].toDouble()).toFloat()
                 roll = Math.toDegrees(orientation[2].toDouble()).toFloat()
+            }
+            Sensor.TYPE_PROXIMITY -> {
+                 // proximity в см, 0 = прикрыт
+                  isProximityNear = event.values[0] < 5f
             }
         }
 
@@ -183,23 +186,27 @@ class LockService : Service(), SensorEventListener {
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun triggerOverlay() {
-        if (justLocked) return
-        justLocked = true
+         if (justLocked) return
+    
+             // Проверяем proximity ПЕРЕД блокировкой
+         if (!isProximityNear) return
+    
+            justLocked = true
 
-        try {
+         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val manager = getSystemService(VibratorManager::class.java)
-                manager.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
-            vibrator.vibrate(VibrationEffect.createOneShot(50, 100))
-        } catch (_: Exception) {}
+            val manager = getSystemService(VibratorManager::class.java)
+            manager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+        vibrator.vibrate(VibrationEffect.createOneShot(50, 100))
+          } catch (_: Exception) {}
 
-        overlayManager.show()
-        updateNotification("Заглушка активна")
-    }
+         overlayManager.show()
+            updateNotification("Заглушка активна")
+     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
