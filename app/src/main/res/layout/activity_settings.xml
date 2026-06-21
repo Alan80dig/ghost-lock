@@ -67,6 +67,36 @@
             android:backgroundTint="#00ff88"
             android:layout_marginBottom="32dp" />
 
+        <!-- Игнорировать оптимизацию батареи -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Не отключать в фоне"
+                android:textSize="14sp"
+                android:textColor="#cccccc" />
+
+            <Switch
+                android:id="@+id/switchBattery"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Рекомендуется включить, чтобы Ghost Lock не отключался системой"
+            android:textSize="11sp"
+            android:textColor="#666666"
+            android:layout_marginBottom="16dp" />
+
         <!-- Switch отключения -->
         <LinearLayout
             android:layout_width="match_parent"

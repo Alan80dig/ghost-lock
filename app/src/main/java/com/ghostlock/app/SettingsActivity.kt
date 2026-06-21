@@ -6,12 +6,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.provider.Settings
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var switchService: Switch
+    private lateinit var switchBattery: Switch
     private lateinit var tvStatus: TextView
     private lateinit var seekSensitivity: SeekBar
     private lateinit var tvSensitivityLabel: TextView
@@ -27,6 +29,7 @@ class SettingsActivity : AppCompatActivity() {
         setContentView(R.layout.activity_settings)
 
         switchService = findViewById(R.id.switchService)
+        switchBattery = findViewById(R.id.switchBattery)
         tvStatus = findViewById(R.id.tvStatus)
         seekSensitivity = findViewById(R.id.seekSensitivity)
         tvSensitivityLabel = findViewById(R.id.tvSensitivityLabel)
@@ -39,6 +42,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun setupUI() {
         updateStatus()
 
+        // Switch вкл/выкл защиты
         val isServiceEnabled = prefs.getBoolean("service_enabled", true)
         switchService.isChecked = isServiceEnabled
         switchService.setOnCheckedChangeListener { _, isChecked ->
@@ -53,6 +57,18 @@ class SettingsActivity : AppCompatActivity() {
             updateStatus()
         }
 
+        // Switch оптимизации батареи
+        switchBattery.isChecked = isIgnoringBattery()
+        switchBattery.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                requestBatteryOptimization()
+            } else {
+                openBatterySettings()
+            }
+            switchBattery.isChecked = isIgnoringBattery()
+        }
+
+        // Чувствительность
         val sensitivity = prefs.getInt("sensitivity", 50)
         seekSensitivity.progress = sensitivity
         updateSensitivityLabel(sensitivity)
@@ -85,18 +101,39 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateStatus() {
-        val batteryOptimized = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+    private fun isIgnoringBattery(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             pm.isIgnoringBatteryOptimizations(packageName)
         } else true
+    }
 
+    private fun requestBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            }
+        }
+    }
+
+    private fun openBatterySettings() {
+        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        startActivity(intent)
+    }
+
+    private fun updateStatus() {
+        val batteryOptimized = isIgnoringBattery()
         val serviceEnabled = prefs.getBoolean("service_enabled", true)
 
         tvStatus.text = buildString {
-            append("Батарея: ${if (batteryOptimized) "✅" else "⚠️"}\n")
+            append("Фон: ${if (batteryOptimized) "✅" else "⚠️"}\n")
             append("Защита: ${if (serviceEnabled) "🟢 Активна" else "🔴 Отключена"}")
         }
+        switchBattery.isChecked = batteryOptimized
     }
 
     private fun updateSensitivityLabel(progress: Int) {

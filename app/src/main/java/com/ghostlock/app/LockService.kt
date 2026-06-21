@@ -14,6 +14,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 class LockService : Service(), SensorEventListener {
@@ -24,9 +25,19 @@ class LockService : Service(), SensorEventListener {
 
     private var isListening = false
     private var isProximityNear = false
+    private var hasFreshData = false
     private var justLocked = false
     private var screenOnTime = 0L
+    private var pendingGestureTime = 0L
     private val handler = Handler(Looper.getMainLooper())
+
+    private val pendingTimeoutRunnable = Runnable {
+        if (pendingGestureTime > 0L) {
+            Log.d("GhostLock", "Proximity timeout — cancel")
+            pendingGestureTime = 0L
+            updateNotification("Защита активна")
+        }
+    }
 
     companion object {
         const val CHANNEL_ID = "ghost_lock_service"
@@ -64,6 +75,7 @@ class LockService : Service(), SensorEventListener {
         overlayManager.onDismiss = {
             justLocked = false
             screenOnTime = System.currentTimeMillis()
+            pendingGestureTime = 0L
             updateNotification("Защита активна")
         }
 
@@ -100,34 +112,48 @@ class LockService : Service(), SensorEventListener {
     fun onScreenOff() {
         overlayManager.hide()
         justLocked = false
+        pendingGestureTime = 0L
+        handler.removeCallbacks(pendingTimeoutRunnable)
     }
 
     private fun startListening() {
         if (isListening) return
+        Log.d("GhostLock", "startListening()")
 
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         val proximity = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        
         proximity?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            Log.d("GhostLock", "Proximity sensor registered")
         }
-        if (accel == null && rotation == null) return
+        
+        if (accel == null && rotation == null) {
+            Log.e("GhostLock", "No accel/rotation sensors")
+            return
+        }
 
         accel?.let {
-             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
-            }
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+        }
         rotation?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
-            }
+        }
 
         isListening = true
         justLocked = false
+        pendingGestureTime = 0L
+        hasFreshData = false
+        Log.d("GhostLock", "Sensors registered, listening started")
     }
 
     private fun stopListening() {
         sensorManager.unregisterListener(this)
         isListening = false
         detector.clear()
+        handler.removeCallbacks(pendingTimeoutRunnable)
+        Log.d("GhostLock", "stopListening()")
     }
 
     fun updateSensitivity(level: Int) {
@@ -143,13 +169,12 @@ class LockService : Service(), SensorEventListener {
     override fun onSensorChanged(event: SensorEvent) {
         if (!isListening) return
 
-        if (System.currentTimeMillis() - screenOnTime < 2000) return
-
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
                 ax = event.values[0]
                 ay = event.values[1]
                 az = event.values[2]
+                hasFreshData = true
             }
             Sensor.TYPE_ROTATION_VECTOR -> {
                 val rotationMatrix = FloatArray(9)
@@ -158,16 +183,28 @@ class LockService : Service(), SensorEventListener {
                 SensorManager.getOrientation(rotationMatrix, orientation)
                 pitch = Math.toDegrees(orientation[1].toDouble()).toFloat()
                 roll = Math.toDegrees(orientation[2].toDouble()).toFloat()
+                hasFreshData = true
             }
             Sensor.TYPE_PROXIMITY -> {
-                 // proximity в см, 0 = прикрыт
-                  isProximityNear = event.values[0] < 5f
+                isProximityNear = event.values[0] < 5f
+                Log.d("GhostLock", "Proximity: ${event.values[0]} cm, isNear=$isProximityNear, pending=$pendingGestureTime")
+                if (isProximityNear && pendingGestureTime > 0L) {
+                    Log.i("GhostLock", "Proximity triggered during pending — overlay now")
+                    handler.removeCallbacks(pendingTimeoutRunnable)
+                    triggerOverlay()
+                    pendingGestureTime = 0L
+                }
             }
         }
 
-        // Скрыть оверлей если экран выключен
+        if (!hasFreshData) return
+        hasFreshData = false
+
+        if (System.currentTimeMillis() - screenOnTime < 2000) return
+
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (overlayManager.isShowing() && !pm.isInteractive) {
+            Log.d("GhostLock", "Screen off with overlay — hiding")
             overlayManager.hide()
             justLocked = false
             return
@@ -175,38 +212,48 @@ class LockService : Service(), SensorEventListener {
 
         if (overlayManager.isShowing()) return
 
+        if (pendingGestureTime > 0L) return
+
         if (justLocked) return
 
         val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az)
         if (gesture != null) {
-            triggerOverlay()
+            Log.i("GhostLock", "GESTURE: $gesture | proximity=$isProximityNear pitch=$pitch roll=$roll az=$az")
+            if (isProximityNear) {
+                triggerOverlay()
+            } else {
+                Log.d("GhostLock", "Waiting 3s for proximity...")
+                pendingGestureTime = System.currentTimeMillis()
+                handler.removeCallbacks(pendingTimeoutRunnable)
+                handler.postDelayed(pendingTimeoutRunnable, 3000)
+            }
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun triggerOverlay() {
-         if (justLocked) return
-    
-             // Проверяем proximity ПЕРЕД блокировкой
-         if (!isProximityNear) return
-    
-            justLocked = true
+        if (justLocked && overlayManager.isShowing()) return
+        justLocked = true
+        pendingGestureTime = 0L
+        handler.removeCallbacks(pendingTimeoutRunnable)
 
-         try {
+        Log.i("GhostLock", "OVERLAY SHOW | proximity=$isProximityNear pitch=$pitch roll=$roll")
+
+        try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = getSystemService(VibratorManager::class.java)
-            manager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-        vibrator.vibrate(VibrationEffect.createOneShot(50, 100))
-          } catch (_: Exception) {}
+                val manager = getSystemService(VibratorManager::class.java)
+                manager.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            vibrator.vibrate(VibrationEffect.createOneShot(50, 100))
+        } catch (_: Exception) {}
 
-         overlayManager.show()
-            updateNotification("Заглушка активна")
-     }
+        overlayManager.show()
+        updateNotification("Заглушка активна")
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -250,6 +297,7 @@ class LockService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         instance = null
+        handler.removeCallbacks(pendingTimeoutRunnable)
         overlayManager.destroy()
         stopListening()
         super.onDestroy()
