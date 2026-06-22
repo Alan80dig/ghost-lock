@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -16,8 +17,7 @@ class OverlayManager(private val context: Context) {
 
     private var overlayView: View? = null
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private val handler = Handler(Looper.getMainLooper())
-    private var timeoutRunnable: Runnable? = null
+    private var isTouchBlocked = false
 
     var onTimeout: (() -> Unit)? = null
     var onDismiss: (() -> Unit)? = null
@@ -38,6 +38,9 @@ class OverlayManager(private val context: Context) {
             }
         }.apply {
             setBackgroundColor(0xFF000000.toInt())
+            setOnTouchListener { _, event ->
+                if (isTouchBlocked && event.action == MotionEvent.ACTION_DOWN) true else false
+            }
         }
 
         val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -62,8 +65,11 @@ class OverlayManager(private val context: Context) {
 
         try {
             windowManager.addView(overlayView, params)
-            startTimeout()
         } catch (_: Exception) {}
+    }
+
+    fun setTouchBlocking(blocked: Boolean) {
+        isTouchBlocked = blocked
     }
 
     fun hide() {
@@ -75,25 +81,10 @@ class OverlayManager(private val context: Context) {
             } catch (_: Exception) {}
         }
         overlayView = null
-        stopTimeout()
         onDismiss?.invoke()
     }
 
     fun isShowing(): Boolean = overlayView != null
-
-    private fun startTimeout() {
-        stopTimeout()
-        timeoutRunnable = Runnable {
-            hide()
-            onTimeout?.invoke()
-        }
-        handler.postDelayed(timeoutRunnable!!, 60_000)
-    }
-
-    private fun stopTimeout() {
-        timeoutRunnable?.let { handler.removeCallbacks(it) }
-        timeoutRunnable = null
-    }
 
     fun destroy() {
         hide()

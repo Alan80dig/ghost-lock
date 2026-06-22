@@ -17,6 +17,10 @@ class OnboardingActivity : AppCompatActivity() {
     private lateinit var btnNext: Button
     private lateinit var btnSkip: Button
 
+    companion object {
+        private const val REQUEST_IGNORE_BATTERY = 1001
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_onboarding)
@@ -28,7 +32,8 @@ class OnboardingActivity : AppCompatActivity() {
         val pages = listOf(
             OnboardingPage("Ghost Lock", "Твой телефон умеет прятаться", "Прижал к себе — экран гаснет.\nПеревернул — экран гаснет.\nУбрал в карман — экран гаснет."),
             OnboardingPage("Естественная защита", "Никаких кнопок", "Телефон сам понимает, когда\nего нужно заблокировать."),
-            OnboardingPage("Нужны разрешения", "Только необходимое", "Доступ к датчикам\nРабота в фоне\nОптимизация батареи")
+            OnboardingPage("Нужны разрешения", "Только необходимое", "Доступ к датчикам\nРабота в фоне\nОптимизация батареи"),
+            OnboardingPage("Не отключать в фоне", "Чтобы Ghost Lock работал всегда", "Разрешите приложению работать\nбез ограничений.\n\nЭто предотвратит отключение\nзащиты системой.")
         )
 
         viewPager.adapter = OnboardingAdapter(pages)
@@ -51,20 +56,28 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun requestPermissionsAndStart() {
-        // Запрос игнорирования оптимизации батареи
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivityForResult(intent, REQUEST_IGNORE_BATTERY)
+                return
             }
-            startActivity(intent)
-           }
         }
         startMainFlow()
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_IGNORE_BATTERY) {
+            startMainFlow()
+        }
+    }
+
     private fun startMainFlow() {
+        LockService.stoppedByUser = false
         LockService.startIfPermitted(this)
         startActivity(Intent(this, SettingsActivity::class.java))
         finish()

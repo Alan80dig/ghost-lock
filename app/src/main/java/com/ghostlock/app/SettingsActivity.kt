@@ -18,7 +18,6 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var seekSensitivity: SeekBar
     private lateinit var tvSensitivityLabel: TextView
     private lateinit var btnDone: Button
-    private lateinit var btnUninstall: Button
 
     private val prefs by lazy {
         getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
@@ -34,7 +33,6 @@ class SettingsActivity : AppCompatActivity() {
         seekSensitivity = findViewById(R.id.seekSensitivity)
         tvSensitivityLabel = findViewById(R.id.tvSensitivityLabel)
         btnDone = findViewById(R.id.btnDone)
-        btnUninstall = findViewById(R.id.btnUninstall)
 
         setupUI()
     }
@@ -42,7 +40,6 @@ class SettingsActivity : AppCompatActivity() {
     private fun setupUI() {
         updateStatus()
 
-        // Switch вкл/выкл защиты
         val isServiceEnabled = prefs.getBoolean("service_enabled", true)
         switchService.isChecked = isServiceEnabled
         switchService.setOnCheckedChangeListener { _, isChecked ->
@@ -57,7 +54,6 @@ class SettingsActivity : AppCompatActivity() {
             updateStatus()
         }
 
-        // Switch оптимизации батареи
         switchBattery.isChecked = isIgnoringBattery()
         switchBattery.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
@@ -68,7 +64,6 @@ class SettingsActivity : AppCompatActivity() {
             switchBattery.isChecked = isIgnoringBattery()
         }
 
-        // Чувствительность
         val sensitivity = prefs.getInt("sensitivity", 50)
         seekSensitivity.progress = sensitivity
         updateSensitivityLabel(sensitivity)
@@ -90,14 +85,6 @@ class SettingsActivity : AppCompatActivity() {
             LockService.stoppedByUser = false
             LockService.startIfPermitted(this)
             finish()
-        }
-
-        btnUninstall.setOnClickListener {
-            LockService.stop(this)
-            val intent = Intent(Intent.ACTION_DELETE).apply {
-                data = Uri.parse("package:$packageName")
-            }
-            startActivity(intent)
         }
     }
 
