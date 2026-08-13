@@ -8,12 +8,7 @@ class ScreenStateReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Intent.ACTION_SCREEN_ON -> {
-                LockService.startIfPermitted(context)
-            }
-            Intent.ACTION_SCREEN_OFF -> {
-                LockService.getInstance()?.onScreenOff()
-            }
+            Intent.ACTION_USER_PRESENT,
             Intent.ACTION_BOOT_COMPLETED -> {
                 LockService.startIfPermitted(context)
             }

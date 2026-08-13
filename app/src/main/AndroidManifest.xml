@@ -31,12 +31,17 @@
         <service
             android:name=".LockService"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Ghost Lock detects gestures to show screen overlay preventing accidental touches before system lock" />
+        </service>
 
         <receiver
             android:name=".ScreenStateReceiver"
             android:exported="false">
             <intent-filter>
+                <action android:name="android.intent.action.USER_PRESENT" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>

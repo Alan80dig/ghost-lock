@@ -17,6 +17,7 @@ import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import android.content.pm.ServiceInfo
 
 class LockService : Service(), SensorEventListener {
 
@@ -35,6 +36,8 @@ class LockService : Service(), SensorEventListener {
     private val rescueRunnable = Runnable {
         Log.w("GhostLock", "Rescue timeout — force hiding overlay")
         destroyOverlaySecurely()
+        // Возобновляем прослушку
+      startListening()
     }
 
     companion object {
@@ -77,7 +80,11 @@ class LockService : Service(), SensorEventListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, buildNotification("Защита активна"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                 startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
+            }
 
         when (intent?.action) {
             "ACTION_HIDE_OVERLAY" -> {
@@ -161,7 +168,9 @@ class LockService : Service(), SensorEventListener {
         
         proximity?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            Log.d("GhostLock", "Proximity registered: maxRange=${it.maximumRange}")
         }
+
         
         if (accel == null && rotation == null) return
 
@@ -213,6 +222,7 @@ class LockService : Service(), SensorEventListener {
                 hasFreshData = true
             }
             Sensor.TYPE_PROXIMITY -> {
+                Log.d("GhostLock", "Proximity event: ${event.values[0]} cm")
                 isProximityNear = event.values[0] < 5f
                 if (overlayManager.isShowing()) {
                     overlayManager.setTouchBlocking(isProximityNear)
@@ -279,7 +289,7 @@ class LockService : Service(), SensorEventListener {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Ghost Lock",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Статус защиты Ghost Lock"
                 setShowBadge(false)
