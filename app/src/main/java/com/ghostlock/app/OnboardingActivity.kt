@@ -19,6 +19,7 @@ class OnboardingActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_IGNORE_BATTERY = 1001
+        private const val REQUEST_WRITE_SETTINGS = 1002
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,25 +57,37 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun requestPermissionsAndStart() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                startActivityForResult(intent, REQUEST_IGNORE_BATTERY)
-                return
-            }
+    // 1. Запрос WRITE_SETTINGS (для таймаута экрана)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(this)) {
+        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
+            data = Uri.parse("package:$packageName")
         }
-        startMainFlow()
+        startActivityForResult(intent, REQUEST_WRITE_SETTINGS)
+        return
     }
 
+    // 2. Запрос игнорирования оптимизации батареи
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivityForResult(intent, REQUEST_IGNORE_BATTERY)
+            return
+        }
+    }
+    startMainFlow()
+ }
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_IGNORE_BATTERY) {
             startMainFlow()
         }
-    }
+        if (requestCode == REQUEST_WRITE_SETTINGS) {
+            requestPermissionsAndStart()
+         }
+     }
 
     private fun startMainFlow() {
         LockService.stoppedByUser = false
