@@ -3,10 +3,9 @@ package com.ghostlock.app
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
@@ -16,10 +15,10 @@ import android.view.WindowManager
 class OverlayManager(private val context: Context) {
 
     private var overlayView: View? = null
-    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val windowManager = context.getApplicationContext()
+        .getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var isTouchBlocked = false
 
-    var onTimeout: (() -> Unit)? = null
     var onDismiss: (() -> Unit)? = null
 
     fun show() {
@@ -36,6 +35,13 @@ class OverlayManager(private val context: Context) {
                     }
                 }
             }
+
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                    return true
+                }
+                return super.dispatchKeyEvent(event)
+            }
         }.apply {
             setBackgroundColor(0xFF000000.toInt())
             setOnTouchListener { _, event ->
@@ -43,17 +49,25 @@ class OverlayManager(private val context: Context) {
             }
         }
 
-        val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_FULLSCREEN or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            layoutFlag,
             flags,
-            PixelFormat.TRANSLUCENT
+            PixelFormat.OPAQUE
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = 0
@@ -65,7 +79,9 @@ class OverlayManager(private val context: Context) {
 
         try {
             windowManager.addView(overlayView, params)
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            overlayView = null
+        }
     }
 
     fun setTouchBlocking(blocked: Boolean) {
@@ -73,10 +89,10 @@ class OverlayManager(private val context: Context) {
     }
 
     fun hide() {
-        overlayView?.let {
+        overlayView?.let { view ->
             try {
-                if (it.isAttachedToWindow) {
-                    windowManager.removeView(it)
+                if (view.windowToken != null) {
+                    windowManager.removeViewImmediate(view)
                 }
             } catch (_: Exception) {}
         }

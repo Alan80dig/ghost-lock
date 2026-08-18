@@ -2,6 +2,7 @@ package com.ghostlock.app
 
 import android.app.*
 import android.content.*
+import android.content.pm.ServiceInfo
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -17,7 +18,6 @@ import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import android.content.pm.ServiceInfo
 
 class LockService : Service(), SensorEventListener {
 
@@ -31,13 +31,13 @@ class LockService : Service(), SensorEventListener {
     private var hasFreshData = false
     private var justLocked = false
     private var screenOnTime = 0L
+    private var lastGestureTime = 0L
     private val handler = Handler(Looper.getMainLooper())
-
-    
 
     companion object {
         const val CHANNEL_ID = "ghost_lock_service"
         const val NOTIFICATION_ID = 1
+        private const val DEBOUNCE_MS = 3000L
 
         @Volatile
         private var instance: LockService? = null
@@ -72,19 +72,19 @@ class LockService : Service(), SensorEventListener {
 
         registerScreenReceiver()
         createNotificationChannel()
-        // Если прошлый цикл не завершился — восстанавливаем таймаут пользователя
+
         val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
         if (prefs.contains("old_screen_timeout")) {
-           restoreScreenTimeout()
+            restoreScreenTimeout()
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification("Защита активна"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-            } else {
-                 startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
-            }
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
+        }
 
         when (intent?.action) {
             "ACTION_HIDE_OVERLAY" -> {
@@ -107,13 +107,13 @@ class LockService : Service(), SensorEventListener {
 
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (pm.isInteractive) {
-           if (overlayManager.isShowing()) {
-              overlayManager.hide()
+            if (overlayManager.isShowing()) {
+                overlayManager.hide()
             }
             screenOnTime = System.currentTimeMillis()
             restoreScreenTimeout()
             startListening()
-         }
+        }
 
         return START_STICKY
     }
@@ -123,7 +123,6 @@ class LockService : Service(), SensorEventListener {
     fun isOverlayShowing(): Boolean = overlayManager.isShowing()
 
     fun onScreenOff() {
-        restoreScreenTimeout()
         destroyOverlaySecurely()
     }
 
@@ -132,14 +131,16 @@ class LockService : Service(), SensorEventListener {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
-                        Log.d("GhostLock", "SCREEN_OFF — stop sensors")
+                        Log.d("GhostLock", "SCREEN_OFF — restore timeout, destroy overlay, stopListening")
+                        restoreScreenTimeout()
+                        destroyOverlaySecurely()
                         stopListening()
                     }
                     Intent.ACTION_SCREEN_ON -> {
                         Log.d("GhostLock", "SCREEN_ON — hide overlay if stuck, restore timeout, start sensors")
                         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                         if (pm.isInteractive && overlayManager.isShowing()) {
-                        destroyOverlaySecurely()
+                            destroyOverlaySecurely()
                         }
                         restoreScreenTimeout()
                         if (!overlayManager.isShowing()) startListening()
@@ -167,20 +168,18 @@ class LockService : Service(), SensorEventListener {
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         val proximity = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
-        
+
         proximity?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-            Log.d("GhostLock", "Proximity registered: maxRange=${it.maximumRange}")
+            sensorManager.registerListener(this, it, 500_000)
         }
 
-        
         if (accel == null && rotation == null) return
 
         accel?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            sensorManager.registerListener(this, it, 500_000)
         }
         rotation?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            sensorManager.registerListener(this, it, 500_000)
         }
 
         isListening = true
@@ -224,7 +223,6 @@ class LockService : Service(), SensorEventListener {
                 hasFreshData = true
             }
             Sensor.TYPE_PROXIMITY -> {
-                Log.d("GhostLock", "Proximity event: ${event.values[0]} cm")
                 isProximityNear = event.values[0] < 5f
                 if (overlayManager.isShowing()) {
                     overlayManager.setTouchBlocking(isProximityNear)
@@ -247,8 +245,13 @@ class LockService : Service(), SensorEventListener {
 
         if (justLocked) return
 
+        // Debounce — не чаще одного срабатывания за 3 секунды
+        val now = System.currentTimeMillis()
+        if (now - lastGestureTime < DEBOUNCE_MS) return
+
         val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az)
         if (gesture != null) {
+            lastGestureTime = now
             triggerOverlay()
         }
     }
@@ -277,31 +280,29 @@ class LockService : Service(), SensorEventListener {
     }
 
     private fun shortenScreenTimeout() {
-    try {
-        if (Settings.System.canWrite(this)) {
-            val oldTimeout = Settings.System.getInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT)
-            // Сохраняем в SharedPreferences
-            getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
-                .edit()
-                .putInt("old_screen_timeout", oldTimeout)
-                .apply()
-            // Ставим минимальный таймаут
-            Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 5000)
-            Log.d("GhostLock", "Screen timeout: $oldTimeout -> 5000")
-        }
-    } catch (_: Exception) {}
+        try {
+            if (Settings.System.canWrite(this)) {
+                val oldTimeout = Settings.System.getInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT)
+                getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt("old_screen_timeout", oldTimeout)
+                    .apply()
+                Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 5000)
+                Log.d("GhostLock", "Screen timeout: $oldTimeout -> 5000")
+            }
+        } catch (_: Exception) {}
     }
 
     private fun restoreScreenTimeout() {
-    try {
-        val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
-        val oldTimeout = prefs.getInt("old_screen_timeout", 0)
-        if (oldTimeout > 0 && Settings.System.canWrite(this)) {
-            Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, oldTimeout)
-            prefs.edit().remove("old_screen_timeout").apply()
-            Log.d("GhostLock", "Screen timeout restored: $oldTimeout")
-        }
-    } catch (_: Exception) {}
+        try {
+            val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
+            val oldTimeout = prefs.getInt("old_screen_timeout", 0)
+            if (oldTimeout > 0 && Settings.System.canWrite(this)) {
+                Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, oldTimeout)
+                prefs.edit().remove("old_screen_timeout").apply()
+                Log.d("GhostLock", "Screen timeout restored: $oldTimeout")
+            }
+        } catch (_: Exception) {}
     }
 
     private fun createNotificationChannel() {
