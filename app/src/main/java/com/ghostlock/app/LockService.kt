@@ -170,16 +170,16 @@ class LockService : Service(), SensorEventListener {
         val proximity = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
 
         proximity?.let {
-            sensorManager.registerListener(this, it, 500_000)
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
 
         if (accel == null && rotation == null) return
 
         accel?.let {
-            sensorManager.registerListener(this, it, 500_000)
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
         rotation?.let {
-            sensorManager.registerListener(this, it, 500_000)
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
 
         isListening = true
@@ -261,6 +261,7 @@ class LockService : Service(), SensorEventListener {
     private fun triggerOverlay() {
         if (justLocked && overlayManager.isShowing()) return
         justLocked = true
+        screenOnTime = System.currentTimeMillis()
 
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

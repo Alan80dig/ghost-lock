@@ -5,11 +5,8 @@ import android.graphics.PixelFormat
 import android.os.Build
 import android.provider.Settings
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import android.view.WindowManager
 
 class OverlayManager(private val context: Context) {
@@ -25,24 +22,7 @@ class OverlayManager(private val context: Context) {
         if (overlayView != null) return
         if (!Settings.canDrawOverlays(context)) return
 
-        overlayView = object : View(context) {
-            override fun onAttachedToWindow() {
-                super.onAttachedToWindow()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    windowInsetsController?.let { controller ->
-                        controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                        controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    }
-                }
-            }
-
-            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-                    return true
-                }
-                return super.dispatchKeyEvent(event)
-            }
-        }.apply {
+        overlayView = View(context).apply {
             setBackgroundColor(0xFF000000.toInt())
             setOnTouchListener { _, event ->
                 if (isTouchBlocked && event.action == MotionEvent.ACTION_DOWN) true else false
@@ -57,9 +37,8 @@ class OverlayManager(private val context: Context) {
         }
 
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_FULLSCREEN or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
 
         val params = WindowManager.LayoutParams(
