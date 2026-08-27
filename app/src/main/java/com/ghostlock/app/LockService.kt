@@ -32,6 +32,7 @@ class LockService : Service(), SensorEventListener {
     private var justLocked = false
     private var screenOnTime = 0L
     private var lastGestureTime = 0L
+    private var wasScreenOff = false
     private val handler = Handler(Looper.getMainLooper())
 
     companion object {
@@ -131,12 +132,14 @@ class LockService : Service(), SensorEventListener {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
+                        wasScreenOff = true
                         Log.d("GhostLock", "SCREEN_OFF — restore timeout, destroy overlay, stopListening")
                         restoreScreenTimeout()
                         destroyOverlaySecurely()
                         stopListening()
                     }
                     Intent.ACTION_SCREEN_ON -> {
+                        wasScreenOff = false
                         Log.d("GhostLock", "SCREEN_ON — hide overlay if stuck, restore timeout, start sensors")
                         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                         if (pm.isInteractive && overlayManager.isShowing()) {
@@ -233,7 +236,7 @@ class LockService : Service(), SensorEventListener {
         if (!hasFreshData) return
         hasFreshData = false
 
-        if (System.currentTimeMillis() - screenOnTime < 2000) return
+        if (System.currentTimeMillis() - screenOnTime < 500) return
 
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (overlayManager.isShowing() && !pm.isInteractive) {
@@ -274,7 +277,13 @@ class LockService : Service(), SensorEventListener {
             vibrator.vibrate(VibrationEffect.createOneShot(50, 100))
         } catch (_: Exception) {}
 
-        overlayManager.show()
+        if (wasScreenOff) {
+            overlayManager.hide()
+            overlayManager.show()
+            wasScreenOff = false
+        } else {
+            overlayManager.show()
+        }
         overlayManager.setTouchBlocking(true)
         updateNotification("Заглушка активна")
         shortenScreenTimeout()
