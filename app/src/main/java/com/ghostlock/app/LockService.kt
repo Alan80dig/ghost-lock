@@ -23,7 +23,6 @@ class LockService : Service(), SensorEventListener {
 
     private lateinit var sensorManager: SensorManager
     private lateinit var detector: GestureDetector
-    private lateinit var overlayManager: OverlayManager
     private lateinit var screenReceiver: BroadcastReceiver
 
     private var isListening = false
@@ -32,7 +31,6 @@ class LockService : Service(), SensorEventListener {
     private var justLocked = false
     private var screenOnTime = 0L
     private var lastGestureTime = 0L
-    private var wasScreenOff = false
     private val handler = Handler(Looper.getMainLooper())
 
     companion object {
@@ -63,13 +61,6 @@ class LockService : Service(), SensorEventListener {
         instance = this
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         detector = GestureDetector(this)
-        overlayManager = OverlayManager(this)
-
-        overlayManager.onDismiss = {
-            justLocked = false
-            screenOnTime = System.currentTimeMillis()
-            updateNotification("Защита активна")
-        }
 
         registerScreenReceiver()
         createNotificationChannel()
@@ -88,19 +79,9 @@ class LockService : Service(), SensorEventListener {
         }
 
         when (intent?.action) {
-            "ACTION_HIDE_OVERLAY" -> {
-                Log.w("GhostLock", "ACTION_HIDE_OVERLAY received")
-                destroyOverlaySecurely()
-                return START_STICKY
-            }
-            "START_LISTENING" -> {
-                screenOnTime = System.currentTimeMillis()
-                startListening()
-            }
-            "STOP_LISTENING" -> stopListening()
             "STOP_SERVICE" -> {
                 stoppedByUser = true
-                destroyOverlaySecurely()
+                stopListening()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -108,9 +89,6 @@ class LockService : Service(), SensorEventListener {
 
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (pm.isInteractive) {
-            if (overlayManager.isShowing()) {
-                overlayManager.hide()
-            }
             screenOnTime = System.currentTimeMillis()
             restoreScreenTimeout()
             startListening()
@@ -121,32 +99,20 @@ class LockService : Service(), SensorEventListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    fun isOverlayShowing(): Boolean = overlayManager.isShowing()
-
-    fun onScreenOff() {
-        destroyOverlaySecurely()
-    }
-
     private fun registerScreenReceiver() {
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
-                        wasScreenOff = true
-                        Log.d("GhostLock", "SCREEN_OFF — restore timeout, destroy overlay, stopListening")
+                        Log.d("GhostLock", "SCREEN_OFF — restore timeout, reset, stop listening")
                         restoreScreenTimeout()
-                        destroyOverlaySecurely()
+                        justLocked = false
                         stopListening()
                     }
                     Intent.ACTION_SCREEN_ON -> {
-                        wasScreenOff = false
-                        Log.d("GhostLock", "SCREEN_ON — hide overlay if stuck, restore timeout, start sensors")
-                        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-                        if (pm.isInteractive && overlayManager.isShowing()) {
-                            destroyOverlaySecurely()
-                        }
+                        Log.d("GhostLock", "SCREEN_ON — restore timeout, start sensors")
                         restoreScreenTimeout()
-                        if (!overlayManager.isShowing()) startListening()
+                        if (!justLocked) startListening()
                     }
                 }
             }
@@ -156,13 +122,6 @@ class LockService : Service(), SensorEventListener {
             addAction(Intent.ACTION_SCREEN_ON)
         }
         registerReceiver(screenReceiver, filter)
-    }
-
-    private fun destroyOverlaySecurely() {
-        try {
-            overlayManager.hide()
-        } catch (_: Exception) {}
-        justLocked = false
     }
 
     private fun startListening() {
@@ -200,6 +159,10 @@ class LockService : Service(), SensorEventListener {
         detector.updateSensitivity(level)
     }
 
+    fun resetLockState() {
+        justLocked = false
+    }
+
     private var pitch = 0f
     private var roll = 0f
     private var ax = 0f
@@ -227,44 +190,34 @@ class LockService : Service(), SensorEventListener {
             }
             Sensor.TYPE_PROXIMITY -> {
                 isProximityNear = event.values[0] < 5f
-                if (overlayManager.isShowing()) {
-                    overlayManager.setTouchBlocking(isProximityNear)
-                }
             }
         }
 
         if (!hasFreshData) return
         hasFreshData = false
 
+        // Телефон в кармане — игнорируем жесты
+        if (isProximityNear) return
+
         if (System.currentTimeMillis() - screenOnTime < 500) return
-
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (overlayManager.isShowing() && !pm.isInteractive) {
-            destroyOverlaySecurely()
-            return
-        }
-
-        if (overlayManager.isShowing()) return
 
         if (justLocked) return
 
-        // Debounce — не чаще одного срабатывания за 3 секунды
         val now = System.currentTimeMillis()
         if (now - lastGestureTime < DEBOUNCE_MS) return
 
         val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az)
         if (gesture != null) {
             lastGestureTime = now
-            triggerOverlay()
+            triggerLock()
         }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    private fun triggerOverlay() {
-        if (justLocked && overlayManager.isShowing()) return
+    private fun triggerLock() {
+        if (justLocked) return
         justLocked = true
-        screenOnTime = System.currentTimeMillis()
 
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -277,16 +230,12 @@ class LockService : Service(), SensorEventListener {
             vibrator.vibrate(VibrationEffect.createOneShot(50, 100))
         } catch (_: Exception) {}
 
-        if (wasScreenOff) {
-            overlayManager.hide()
-            overlayManager.show()
-            wasScreenOff = false
-        } else {
-            overlayManager.show()
-        }
-        overlayManager.setTouchBlocking(true)
-        updateNotification("Заглушка активна")
         shortenScreenTimeout()
+
+        val intent = Intent(this, BlackoutActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
     }
 
     private fun shortenScreenTimeout() {
@@ -358,7 +307,6 @@ class LockService : Service(), SensorEventListener {
     override fun onDestroy() {
         instance = null
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
-        overlayManager.destroy()
         stopListening()
         super.onDestroy()
     }

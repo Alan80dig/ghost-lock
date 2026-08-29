@@ -29,6 +29,13 @@
             android:name=".SettingsActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".BlackoutActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+
         <service
             android:name=".LockService"
             android:exported="false"
@@ -47,17 +54,6 @@
             </intent-filter>
         </receiver>
 
-        <receiver
-            android:name=".AdminReceiver"
-            android:exported="false"
-            android:permission="android.permission.BIND_DEVICE_ADMIN">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
 
     </application>
 </manifest>
