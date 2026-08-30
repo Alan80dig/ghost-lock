@@ -76,7 +76,7 @@ class SettingsActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 seekBar?.let {
                     prefs.edit().putInt("sensitivity", it.progress).apply()
-                    LockService.getInstance()?.updateSensitivity(it.progress)
+                    // Чувствительность настраивается через shakeThreshold
                 }
             }
         })
