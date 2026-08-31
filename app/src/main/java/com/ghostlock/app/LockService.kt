@@ -9,41 +9,29 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
-import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import kotlin.math.sqrt
 
 class LockService : Service(), SensorEventListener {
 
     private lateinit var sensorManager: SensorManager
-    private var accelerometer: Sensor? = null
-    private var isLocking = false
+    private lateinit var detector: GestureDetector
+    private lateinit var screenReceiver: BroadcastReceiver
 
-    private var lastAcceleration = 0f
-    private var currentAcceleration = 0f
-    private val shakeThreshold = 5f
-
-    private val safetyReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_SCREEN_OFF -> {
-                    ensureTimeoutRestored(context ?: return)
-                }
-                "com.ghostlock.app.ACTION_RESTORE_TIMEOUT" -> {
-                    ensureTimeoutRestored(context ?: return)
-                }
-            }
-        }
-    }
+    private var isListening = false
+    private var isProximityNear = false
+    private var hasFreshData = false
+    private var justLocked = false
+    private var screenOnTime = 0L
+    private var lastGestureTime = 0L
 
     companion object {
         const val CHANNEL_ID = "ghost_lock_service"
         const val NOTIFICATION_ID = 1
+        private const val DEBOUNCE_MS = 3000L
 
         @Volatile
         private var instance: LockService? = null
@@ -55,12 +43,7 @@ class LockService : Service(), SensorEventListener {
 
         fun startIfPermitted(context: Context) {
             if (stoppedByUser) return
-            val intent = Intent(context, LockService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startForegroundService(Intent(context, LockService::class.java))
         }
 
         fun stop(context: Context) {
@@ -71,75 +54,160 @@ class LockService : Service(), SensorEventListener {
     override fun onCreate() {
         super.onCreate()
         instance = this
-
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        accelerometer?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-        }
+        detector = GestureDetector(this)
 
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_ON)
-            addAction(Intent.ACTION_SCREEN_OFF)
-            addAction("com.ghostlock.app.ACTION_RESTORE_TIMEOUT")
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(safetyReceiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(safetyReceiver, filter)
-        }
-
+        registerScreenReceiver()
         createNotificationChannel()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification("Защита активна"),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
-        }
+        val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
+        val sensitivity = prefs.getInt("sensitivity", 50)
+        detector.updateSensitivity(sensitivity)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, buildNotification("Защита активна"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
+        }
+
         when (intent?.action) {
             "STOP_SERVICE" -> {
                 stoppedByUser = true
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                } else {
-                    @Suppress("DEPRECATION")
-                    stopForeground(true)
-                }
+                stopListening()
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }
+
+        val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        if (pm.isInteractive) {
+            screenOnTime = System.currentTimeMillis()
+            startListening()
+        }
+
         return START_STICKY
     }
 
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event == null || event.sensor.type != Sensor.TYPE_ACCELEROMETER || isLocking) return
+    override fun onBind(intent: Intent?): IBinder? = null
 
-        Log.d("GhostLock", "Sensor event: values=${event.values[0]},${event.values[1]},${event.values[2]}")
+    private fun registerScreenReceiver() {
+        screenReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        Log.d("GhostLock", "SCREEN_OFF — stop listening")
+                        justLocked = false
+                        stopListening()
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        Log.d("GhostLock", "SCREEN_ON — start sensors")
+                        if (!justLocked) startListening()
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        registerReceiver(screenReceiver, filter)
+    }
 
-        lastAcceleration = currentAcceleration
-        currentAcceleration = sqrt(
-            event.values[0] * event.values[0] +
-            event.values[1] * event.values[1] +
-            event.values[2] * event.values[2]
-        )
-        val delta = currentAcceleration - lastAcceleration
+    private fun startListening() {
+        if (isListening) return
 
-        if (delta > shakeThreshold) {
-            triggerLockByMotion()
+        val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        val proximity = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+
+        proximity?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+
+        if (accel == null && rotation == null) return
+
+        accel?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+        rotation?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
+
+        isListening = true
+        justLocked = false
+        hasFreshData = false
+    }
+
+    private fun stopListening() {
+        sensorManager.unregisterListener(this)
+        isListening = false
+        detector.clear()
+    }
+
+    fun updateSensitivity(level: Int) {
+        detector.updateSensitivity(level)
+    }
+
+    fun resetLockState() {
+        justLocked = false
+    }
+
+    private var pitch = 0f
+    private var roll = 0f
+    private var ax = 0f
+    private var ay = 0f
+    private var az = 0f
+
+    override fun onSensorChanged(event: SensorEvent) {
+        if (!isListening) return
+
+        when (event.sensor.type) {
+            Sensor.TYPE_ACCELEROMETER -> {
+                ax = event.values[0]
+                ay = event.values[1]
+                az = event.values[2]
+                hasFreshData = true
+            }
+            Sensor.TYPE_ROTATION_VECTOR -> {
+                val rotationMatrix = FloatArray(9)
+                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                val orientation = FloatArray(3)
+                SensorManager.getOrientation(rotationMatrix, orientation)
+                pitch = Math.toDegrees(orientation[1].toDouble()).toFloat()
+                roll = Math.toDegrees(orientation[2].toDouble()).toFloat()
+                hasFreshData = true
+            }
+            Sensor.TYPE_PROXIMITY -> {
+                isProximityNear = event.values[0] < 5f
+            }
+        }
+
+        if (!hasFreshData) return
+        hasFreshData = false
+
+        if (isProximityNear) return
+
+        if (System.currentTimeMillis() - screenOnTime < 500) return
+
+        if (justLocked) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastGestureTime < DEBOUNCE_MS) return
+
+        val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az)
+        if (gesture != null) {
+            lastGestureTime = now
+            triggerLock()
         }
     }
 
-    private fun triggerLockByMotion() {
-        if (!Settings.System.canWrite(this)) return
-        isLocking = true
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    private fun triggerLock() {
+        if (justLocked) return
+        justLocked = true
 
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -157,61 +225,13 @@ class LockService : Service(), SensorEventListener {
             }
         } catch (_: Exception) {}
 
-        try {
-            val currentTimeout = Settings.System.getInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 15000)
-            if (currentTimeout > 2500) {
-                getSharedPreferences("safety_prefs", MODE_PRIVATE)
-                    .edit()
-                    .putInt("user_timeout", currentTimeout)
-                    .apply()
-                Log.d("GhostLock", "User timeout saved: $currentTimeout")
-            }
-
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent("com.ghostlock.app.ACTION_RESTORE_TIMEOUT")
-            val pendingIntent = PendingIntent.getBroadcast(
-                this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + 3500,
-                pendingIntent
-            )
-            Log.d("GhostLock", "Restore alarm set for +3500ms")
-
-            Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 2500)
-            Log.d("GhostLock", "Timeout set to 2500")
-        } catch (e: Exception) {
-            ensureTimeoutRestored(this)
+        val accessibilityService = GhostAccessibilityService.getInstance()
+        if (accessibilityService != null) {
+            val success = accessibilityService.lockScreen()
+            Log.d("GhostLock", "Lock via Accessibility: $success")
+        } else {
+            Log.e("GhostLock", "Accessibility service not enabled!")
         }
-    }
-
-    private fun ensureTimeoutRestored(context: Context) {
-        if (!Settings.System.canWrite(context)) return
-        try {
-            val currentTimeout = Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, 15000)
-            if (currentTimeout <= 2500) {
-                val prefs = context.getSharedPreferences("safety_prefs", MODE_PRIVATE)
-                val originalTimeout = prefs.getInt("user_timeout", 30000)
-
-                Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, originalTimeout)
-                Log.d("GhostLock", "Timeout restored: $originalTimeout")
-            }
-        } catch (_: Exception) {}
-        isLocking = false
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        sensorManager.unregisterListener(this)
-        try { unregisterReceiver(safetyReceiver) } catch (_: Exception) {}
-        ensureTimeoutRestored(this)
-        instance = null
-        super.onDestroy()
     }
 
     private fun createNotificationChannel() {
@@ -246,5 +266,12 @@ class LockService : Service(), SensorEventListener {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .addAction(android.R.drawable.ic_media_pause, "ОТКЛЮЧИТЬ", stopPendingIntent)
             .build()
+    }
+
+    override fun onDestroy() {
+        instance = null
+        try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
+        stopListening()
+        super.onDestroy()
     }
 }
