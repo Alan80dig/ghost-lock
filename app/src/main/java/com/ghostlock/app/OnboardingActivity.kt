@@ -24,8 +24,10 @@ class OnboardingActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Если всё уже настроено — сразу в настройки
-        if (isEverythingConfigured()) {
+        // Быстрый старт: если уже настроено — мгновенно в настройки
+        val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
+        val hasOnboarded = prefs.getBoolean("has_onboarded", false)
+        if (hasOnboarded && isAccessibilityEnabled()) {
             startMainFlow()
             return
         }
@@ -62,17 +64,17 @@ class OnboardingActivity : AppCompatActivity() {
         btnSkip.setOnClickListener { requestPermissionsAndStart() }
     }
 
-    private fun isEverythingConfigured(): Boolean {
-        // Проверяем, включена ли Accessibility-служба
-        val enabledServices = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ) ?: return false
-        return enabledServices.contains("GhostAccessibilityService")
+    private fun isAccessibilityEnabled(): Boolean {
+        return try {
+            val enabledServices = Settings.Secure.getString(
+                contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: return false
+            enabledServices.contains("GhostAccessibilityService")
+        } catch (_: Exception) { false }
     }
 
     private fun requestPermissionsAndStart() {
-        // 1. Запрос игнорирования оптимизации батареи
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!pm.isIgnoringBatteryOptimizations(packageName)) {
@@ -84,10 +86,22 @@ class OnboardingActivity : AppCompatActivity() {
             }
         }
 
-        // 2. Открываем настройки Accessibility, если служба не включена
-        if (!isEverythingConfigured()) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        if (!isAccessibilityEnabled()) {
+            // Пробуем открыть настройки Accessibility
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (_: Exception) {
+                try {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                } catch (_: Exception) {}
+            }
         }
+
+        // Сохраняем флаг онбординга
+        getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("has_onboarded", true)
+            .apply()
 
         startMainFlow()
     }

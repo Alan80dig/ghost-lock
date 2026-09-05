@@ -1,5 +1,6 @@
 package com.ghostlock.app
 
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.media.AudioManager
 import android.telephony.TelephonyManager
@@ -12,7 +13,7 @@ class GestureDetector(private val context: Context) {
     private val accelZWindow = CircularBuffer(10)
 
     private var rollThreshold = 55f
-    private var pitchThreshold = 100f
+    private var pitchThreshold = 70f
     private var accelYThreshold = 3f
     private var rollSpeedFlip = 200f
     private var rollSpeedPocketMin = 100f
@@ -113,7 +114,27 @@ class GestureDetector(private val context: Context) {
     }
 
     private fun isHorizontalPhoto(pitch: Float, roll: Float): Boolean {
-        return abs(pitch) < 30f && abs(roll) in 45f..90f
+        // Блокируем только если горизонтально И камера активна
+        val isHorizontal = abs(pitch) < 30f && abs(roll) in 45f..90f
+        if (!isHorizontal) return false
+        return isCameraAppActive()
+    }
+
+    private fun isCameraAppActive(): Boolean {
+        return try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+            val now = System.currentTimeMillis()
+            val stats = usm.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY,
+                now - 5000,
+                now
+            )
+            val topPackage = stats.maxByOrNull { it.lastTimeUsed }?.packageName ?: return false
+
+            topPackage.contains("camera", ignoreCase = true) ||
+                topPackage.contains("gallery", ignoreCase = true) ||
+                topPackage.contains("video", ignoreCase = true)
+        } catch (_: Exception) { false }
     }
 
     private fun cooldownPassed(): Boolean {
