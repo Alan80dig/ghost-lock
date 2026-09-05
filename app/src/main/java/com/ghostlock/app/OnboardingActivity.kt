@@ -19,11 +19,17 @@ class OnboardingActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_IGNORE_BATTERY = 1001
-        private const val REQUEST_WRITE_SETTINGS = 1002
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Если всё уже настроено — сразу в настройки
+        if (isEverythingConfigured()) {
+            startMainFlow()
+            return
+        }
+
         setContentView(R.layout.activity_onboarding)
 
         viewPager = findViewById(R.id.viewPager)
@@ -31,10 +37,10 @@ class OnboardingActivity : AppCompatActivity() {
         btnSkip = findViewById(R.id.btnSkip)
 
         val pages = listOf(
-            OnboardingPage("Ghost Lock", "Твой телефон умеет прятаться", "Прижал к себе — экран гаснет.\nПеревернул — экран гаснет.\nУбрал в карман — экран гаснет."),
+            OnboardingPage("FlickLock", "Snap your screen shut", "Прижал к себе — экран гаснет.\nПеревернул — экран гаснет.\nУбрал в карман — экран гаснет."),
             OnboardingPage("Естественная защита", "Никаких кнопок", "Телефон сам понимает, когда\nего нужно заблокировать."),
-            OnboardingPage("Нужны разрешения", "Только необходимое", "Доступ к датчикам\nРабота в фоне\nОптимизация батареи"),
-            OnboardingPage("Не отключать в фоне", "Чтобы Ghost Lock работал всегда", "Разрешите приложению работать\nбез ограничений.\n\nЭто предотвратит отключение\nзащиты системой.")
+            OnboardingPage("Нужны разрешения", "Только необходимое", "Доступ к датчикам\nСлужба специальных возможностей\nОптимизация батареи"),
+            OnboardingPage("Служба специальных возможностей", "Одна функция — одна цель", "FlickLock использует только\nGLOBAL_ACTION_LOCK_SCREEN.\n\nМы не читаем текст, не видим экран,\nне собираем данные.\n\nВключите FlickLock в настройках\nСпециальных возможностей.")
         )
 
         viewPager.adapter = OnboardingAdapter(pages)
@@ -56,38 +62,42 @@ class OnboardingActivity : AppCompatActivity() {
         btnSkip.setOnClickListener { requestPermissionsAndStart() }
     }
 
-    private fun requestPermissionsAndStart() {
-    // 1. Запрос WRITE_SETTINGS (для таймаута экрана)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.System.canWrite(this)) {
-        val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
-            data = Uri.parse("package:$packageName")
-        }
-        startActivityForResult(intent, REQUEST_WRITE_SETTINGS)
-        return
+    private fun isEverythingConfigured(): Boolean {
+        // Проверяем, включена ли Accessibility-служба
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabledServices.contains("GhostAccessibilityService")
     }
 
-    // 2. Запрос игнорирования оптимизации батареи
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
+    private fun requestPermissionsAndStart() {
+        // 1. Запрос игнорирования оптимизации батареи
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivityForResult(intent, REQUEST_IGNORE_BATTERY)
+                return
             }
-            startActivityForResult(intent, REQUEST_IGNORE_BATTERY)
-            return
         }
+
+        // 2. Открываем настройки Accessibility, если служба не включена
+        if (!isEverythingConfigured()) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        startMainFlow()
     }
-    startMainFlow()
- }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_IGNORE_BATTERY) {
             startMainFlow()
         }
-        if (requestCode == REQUEST_WRITE_SETTINGS) {
-            requestPermissionsAndStart()
-         }
-     }
+    }
 
     private fun startMainFlow() {
         LockService.stoppedByUser = false

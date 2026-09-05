@@ -238,10 +238,10 @@ class LockService : Service(), SensorEventListener {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Lock Timer",
+                "FlickLock",
                 NotificationManager.IMPORTANCE_MIN
             ).apply {
-                description = "Статус защиты Lock Timer"
+                description = "Статус защиты FlickLock"
                 setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
@@ -259,7 +259,7 @@ class LockService : Service(), SensorEventListener {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Lock Timer")
+            .setContentTitle("FlickLock")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setOngoing(true)

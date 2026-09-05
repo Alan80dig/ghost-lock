@@ -12,7 +12,7 @@ class GestureDetector(private val context: Context) {
     private val accelZWindow = CircularBuffer(10)
 
     private var rollThreshold = 55f
-    private var pitchThreshold = 70f
+    private var pitchThreshold = 100f
     private var accelYThreshold = 3f
     private var rollSpeedFlip = 200f
     private var rollSpeedPocketMin = 100f
@@ -36,10 +36,10 @@ class GestureDetector(private val context: Context) {
             else -> 20f
         }
         pitchThreshold = when (level) {
-            in 0..25 -> 80f
-            in 26..50 -> 55f
-            in 51..75 -> 40f
-            else -> 25f
+            in 0..25 -> 120f
+            in 26..50 -> 100f
+            in 51..75 -> 80f
+            else -> 60f
         }
         accelYThreshold = when (level) {
             in 0..25 -> 4f

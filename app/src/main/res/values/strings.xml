@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Lock Timer</string>
-    <string name="accessibility_description">Lock Timer использует службу специальных возможностей для мгновенной блокировки экрана по жесту встряхивания. Служба не собирает и не передаёт никакие данные.</string>
+    <string name="app_name">FlickLock</string>
+    <string name="accessibility_description">FlickLock использует службу специальных возможностей для мгновенной блокировки экрана по жесту встряхивания. Служба не собирает и не передаёт никакие данные.</string>
 </resources>
