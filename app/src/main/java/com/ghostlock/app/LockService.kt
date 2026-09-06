@@ -97,12 +97,14 @@ class LockService : Service(), SensorEventListener {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
-                        Log.d("GhostLock", "SCREEN_OFF — stop listening")
+                        Log.d("GhostLock", "SCREEN_OFF — stop listening, reset camera flag")
+                        GhostAccessibilityService.resetCameraFlag()
                         justLocked = false
                         stopListening()
                     }
                     Intent.ACTION_SCREEN_ON -> {
                         Log.d("GhostLock", "SCREEN_ON — start sensors")
+                        screenOnTime = System.currentTimeMillis()
                         if (!justLocked) startListening()
                     }
                 }
@@ -196,7 +198,7 @@ class LockService : Service(), SensorEventListener {
         val now = System.currentTimeMillis()
         if (now - lastGestureTime < DEBOUNCE_MS) return
 
-        val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az)
+        val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az, event.timestamp)
         if (gesture != null) {
             lastGestureTime = now
             triggerLock()
