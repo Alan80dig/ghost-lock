@@ -19,15 +19,15 @@ class OnboardingActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_IGNORE_BATTERY = 1001
+        private const val REQUEST_ACCESSIBILITY = 1002
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Быстрый старт: если уже настроено — мгновенно в настройки
         val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
         val hasOnboarded = prefs.getBoolean("has_onboarded", false)
-        if (hasOnboarded && isAccessibilityEnabled()) {
+        if (hasOnboarded && isAccessibilityEnabled() && isBatteryOptimized()) {
             startMainFlow()
             return
         }
@@ -74,42 +74,69 @@ class OnboardingActivity : AppCompatActivity() {
         } catch (_: Exception) { false }
     }
 
-    private fun requestPermissionsAndStart() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+    private fun isBatteryOptimized(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                startActivityForResult(intent, REQUEST_IGNORE_BATTERY)
-                return
-            }
-        }
+            pm.isIgnoringBatteryOptimizations(packageName)
+        } else true
+    }
 
-        if (!isAccessibilityEnabled()) {
-            // Пробуем открыть настройки Accessibility
+    private fun requestPermissionsAndStart() {
+        // Шаг 1: Батарея
+        if (!isBatteryOptimized()) {
             try {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                startActivityForResult(
+                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                    REQUEST_IGNORE_BATTERY
+                )
             } catch (_: Exception) {
                 try {
-                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                    startActivityForResult(
+                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = Uri.parse("package:$packageName")
+                        },
+                        REQUEST_IGNORE_BATTERY
+                    )
                 } catch (_: Exception) {}
             }
+            return
         }
 
-        // Сохраняем флаг онбординга
+        // Шаг 2: Accessibility
+        if (!isAccessibilityEnabled()) {
+            try {
+                startActivityForResult(
+                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+                    REQUEST_ACCESSIBILITY
+                )
+            } catch (_: Exception) {
+                try {
+                    startActivityForResult(
+                        Intent(Settings.ACTION_SETTINGS),
+                        REQUEST_ACCESSIBILITY
+                    )
+                } catch (_: Exception) {}
+            }
+            return
+        }
+
+        // Всё готово
+        completeOnboarding()
+    }
+
+    private fun completeOnboarding() {
         getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
             .edit()
             .putBoolean("has_onboarded", true)
             .apply()
-
         startMainFlow()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_IGNORE_BATTERY) {
-            startMainFlow()
+        when (requestCode) {
+            REQUEST_IGNORE_BATTERY -> requestPermissionsAndStart()
+            REQUEST_ACCESSIBILITY -> requestPermissionsAndStart()
         }
     }
 

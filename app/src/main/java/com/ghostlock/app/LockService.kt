@@ -43,7 +43,13 @@ class LockService : Service(), SensorEventListener {
 
         fun startIfPermitted(context: Context) {
             if (stoppedByUser) return
-            context.startForegroundService(Intent(context, LockService::class.java))
+            try {
+                context.startForegroundService(Intent(context, LockService::class.java))
+            } catch (_: Exception) {
+                try {
+                    context.startService(Intent(context, LockService::class.java))
+                } catch (_: Exception) {}
+            }
         }
 
         fun stop(context: Context) {
@@ -66,8 +72,12 @@ class LockService : Service(), SensorEventListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, buildNotification("Защита активна"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification("Защита активна"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
         } else {
             startForeground(NOTIFICATION_ID, buildNotification("Защита активна"))
         }
@@ -220,7 +230,7 @@ class LockService : Service(), SensorEventListener {
                 getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(50, 100))
+                vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(50)

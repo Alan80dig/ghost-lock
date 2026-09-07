@@ -54,14 +54,12 @@ class SettingsActivity : AppCompatActivity() {
             updateStatus()
         }
 
-        switchBattery.isChecked = isIgnoringBattery()
         switchBattery.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 requestBatteryOptimization()
             } else {
                 openBatterySettings()
             }
-            switchBattery.isChecked = isIgnoringBattery()
         }
 
         val sensitivity = prefs.getInt("sensitivity", 50)
@@ -76,7 +74,7 @@ class SettingsActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 seekBar?.let {
                     prefs.edit().putInt("sensitivity", it.progress).apply()
-                    // Чувствительность настраивается через shakeThreshold
+                    LockService.getInstance()?.updateSensitivity(it.progress)
                 }
             }
         })
@@ -120,7 +118,17 @@ class SettingsActivity : AppCompatActivity() {
             append("Фон: ${if (batteryOptimized) "✅" else "⚠️"}\n")
             append("Защита: ${if (serviceEnabled) "🟢 Активна" else "🔴 Отключена"}")
         }
+
+        // Временно убираем слушатель, чтобы не вызвать ложное открытие настроек
+        switchBattery.setOnCheckedChangeListener(null)
         switchBattery.isChecked = batteryOptimized
+        switchBattery.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                requestBatteryOptimization()
+            } else {
+                openBatterySettings()
+            }
+        }
     }
 
     private fun updateSensitivityLabel(progress: Int) {
