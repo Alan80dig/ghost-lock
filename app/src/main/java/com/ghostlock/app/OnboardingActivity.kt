@@ -8,19 +8,16 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CheckBox
 import androidx.appcompat.app.AppCompatActivity
-import androidx.viewpager2.widget.ViewPager2
 
 class OnboardingActivity : AppCompatActivity() {
 
-    private lateinit var viewPager: ViewPager2
-    private lateinit var btnNext: Button
-    private lateinit var btnSkip: Button
-
-    companion object {
-        private const val REQUEST_IGNORE_BATTERY = 1001
-        private const val REQUEST_ACCESSIBILITY = 1002
-    }
+    private lateinit var checkBattery: CheckBox
+    private lateinit var checkAccessibility: CheckBox
+    private lateinit var btnBattery: Button
+    private lateinit var btnAccessibility: Button
+    private lateinit var btnStart: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,34 +31,63 @@ class OnboardingActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_onboarding)
 
-        viewPager = findViewById(R.id.viewPager)
-        btnNext = findViewById(R.id.btnNext)
-        btnSkip = findViewById(R.id.btnSkip)
+        checkBattery = findViewById(R.id.checkBattery)
+        checkAccessibility = findViewById(R.id.checkAccessibility)
+        btnBattery = findViewById(R.id.btnBattery)
+        btnAccessibility = findViewById(R.id.btnAccessibility)
+        btnStart = findViewById(R.id.btnStart)
 
-        val pages = listOf(
-            OnboardingPage("FlickLock", "Snap your screen shut", "Прижал к себе — экран гаснет.\nПеревернул — экран гаснет.\nУбрал в карман — экран гаснет."),
-            OnboardingPage("Естественная защита", "Никаких кнопок", "Телефон сам понимает, когда\nего нужно заблокировать."),
-            OnboardingPage("Нужны разрешения", "Только необходимое", "Доступ к датчикам\nСлужба специальных возможностей\nОптимизация батареи"),
-            OnboardingPage("Служба специальных возможностей", "Одна функция — одна цель", "FlickLock использует только\nGLOBAL_ACTION_LOCK_SCREEN.\n\nМы не читаем текст, не видим экран,\nне собираем данные.\n\nВключите FlickLock в настройках\nСпециальных возможностей.")
-        )
-
-        viewPager.adapter = OnboardingAdapter(pages)
-
-        var currentPage = 0
-        viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
-            override fun onPageSelected(position: Int) {
-                currentPage = position
-                btnNext.text = if (position == pages.size - 1) "Запустить" else "Далее"
-                btnSkip.visibility = if (position == pages.size - 1) android.view.View.GONE else android.view.View.VISIBLE
+        btnBattery.setOnClickListener {
+            try {
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                })
+            } catch (_: Exception) {
+                try {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                } catch (_: Exception) {}
             }
-        })
-
-        btnNext.setOnClickListener {
-            if (currentPage == pages.size - 1) requestPermissionsAndStart()
-            else viewPager.currentItem = currentPage + 1
         }
 
-        btnSkip.setOnClickListener { requestPermissionsAndStart() }
+        btnAccessibility.setOnClickListener {
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (_: Exception) {
+                try {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                } catch (_: Exception) {}
+            }
+        }
+
+        btnStart.setOnClickListener {
+            getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("has_onboarded", true)
+                .apply()
+
+            LockService.stoppedByUser = false
+            LockService.startIfPermitted(this)
+            startActivity(Intent(this, SettingsActivity::class.java))
+            finish()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updatePermissionsState()
+    }
+
+    private fun updatePermissionsState() {
+        val isBatteryOk = isBatteryOptimized()
+        val isAccessibilityOk = isAccessibilityEnabled()
+
+        checkBattery.isChecked = isBatteryOk
+        checkAccessibility.isChecked = isAccessibilityOk
+
+        btnBattery.isEnabled = !isBatteryOk
+        btnAccessibility.isEnabled = !isAccessibilityOk
+
+        btnStart.isEnabled = isBatteryOk && isAccessibilityOk
     }
 
     private fun isAccessibilityEnabled(): Boolean {
@@ -79,65 +105,6 @@ class OnboardingActivity : AppCompatActivity() {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             pm.isIgnoringBatteryOptimizations(packageName)
         } else true
-    }
-
-    private fun requestPermissionsAndStart() {
-        // Шаг 1: Батарея
-        if (!isBatteryOptimized()) {
-            try {
-                startActivityForResult(
-                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-                    REQUEST_IGNORE_BATTERY
-                )
-            } catch (_: Exception) {
-                try {
-                    startActivityForResult(
-                        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                            data = Uri.parse("package:$packageName")
-                        },
-                        REQUEST_IGNORE_BATTERY
-                    )
-                } catch (_: Exception) {}
-            }
-            return
-        }
-
-        // Шаг 2: Accessibility
-        if (!isAccessibilityEnabled()) {
-            try {
-                startActivityForResult(
-                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
-                    REQUEST_ACCESSIBILITY
-                )
-            } catch (_: Exception) {
-                try {
-                    startActivityForResult(
-                        Intent(Settings.ACTION_SETTINGS),
-                        REQUEST_ACCESSIBILITY
-                    )
-                } catch (_: Exception) {}
-            }
-            return
-        }
-
-        // Всё готово
-        completeOnboarding()
-    }
-
-    private fun completeOnboarding() {
-        getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean("has_onboarded", true)
-            .apply()
-        startMainFlow()
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        when (requestCode) {
-            REQUEST_IGNORE_BATTERY -> requestPermissionsAndStart()
-            REQUEST_ACCESSIBILITY -> requestPermissionsAndStart()
-        }
     }
 
     private fun startMainFlow() {
