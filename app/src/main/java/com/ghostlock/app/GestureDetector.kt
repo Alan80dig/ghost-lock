@@ -2,10 +2,51 @@ package com.ghostlock.app
 
 import android.content.Context
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import android.telephony.TelephonyManager
 import kotlin.math.abs
 
 class GestureDetector(private val context: Context) {
+
+    companion object {
+        private const val CALL_CHECK_INTERVAL_MS = 2000L
+    }
+
+    // ===== isCallActive через Handler =====
+    @Volatile private var isCallActiveFlag = false
+    private val callCheckHandler = Handler(Looper.getMainLooper())
+    private val callCheckRunnable = object : Runnable {
+        override fun run() {
+            isCallActiveFlag = checkCallActiveNow()
+            callCheckHandler.postDelayed(this, CALL_CHECK_INTERVAL_MS)
+        }
+    }
+
+    fun startCallMonitoring() {
+        callCheckHandler.removeCallbacks(callCheckRunnable)
+        callCheckHandler.post(callCheckRunnable)
+    }
+
+    fun stopCallMonitoring() {
+        callCheckHandler.removeCallbacks(callCheckRunnable)
+        isCallActiveFlag = false
+    }
+
+    private fun checkCallActiveNow(): Boolean {
+        return try {
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (tm != null && am != null) {
+                tm.callState != TelephonyManager.CALL_STATE_IDLE ||
+                        am.mode == AudioManager.MODE_IN_COMMUNICATION ||
+                        am.mode == AudioManager.MODE_IN_CALL
+            } else false
+        } catch (e: SecurityException) {
+            false
+        }
+    }
+    // ===== /isCallActive =====
 
     private val pitchWindow = CircularBuffer(10)
     private val rollWindow = CircularBuffer(10)
@@ -28,42 +69,27 @@ class GestureDetector(private val context: Context) {
     private var lastStableRoll = 0f
     private var stableSince = 0L
 
+    // ===== Плавная интерполяция порогов =====
     fun updateSensitivity(level: Int) {
-        rollThreshold = when (level) {
-            in 0..25 -> 55f
-            in 26..50 -> 40f
-            in 51..75 -> 30f
-            else -> 20f
-        }
-        pitchThreshold = when (level) {
-            in 0..25 -> 120f
-            in 26..50 -> 100f
-            in 51..75 -> 80f
-            else -> 60f
-        }
-        accelYThreshold = when (level) {
-            in 0..25 -> 4f
-            in 26..50 -> 2.5f
-            in 51..75 -> 1.5f
-            else -> 1f
-        }
-        cooldownMs = when (level) {
-            in 0..25 -> 5000L
-            in 26..50 -> 3000L
-            in 51..75 -> 2000L
-            else -> 1000L
-        }
+        val t = level.coerceIn(0, 100) / 100f
+
+        rollThreshold   = lerp(60f, 15f, t)
+        pitchThreshold  = lerp(90f, 30f, t)
+        accelYThreshold = lerp(4f, 1f, t)
+        cooldownMs      = lerp(5000L, 1000L, t)
     }
 
+    private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+    private fun lerp(a: Long, b: Long, t: Float): Long = (a + (b - a) * t).toLong()
+    // ===== /Плавная интерполяция =====
+
     fun onSensorChanged(pitch: Float, roll: Float, ax: Float, ay: Float, az: Float, timestampNs: Long = 0L): String? {
-        if (isCallActive()) return null
+        if (isCallActiveFlag) return null
         if (isHorizontalPhoto(pitch, roll)) return null
 
-        // Если timestamp не передан — используем System.nanoTime()
         val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
 
-        // Считаем azDelta ДО добавления в буфер
-        val azDelta = abs(az - (accelZWindow.toList().lastOrNull()?.value ?: az))
+        val azDelta = if (accelZWindow.size > 0) abs(az - accelZWindow.last()) else 0f
 
         pitchWindow.add(pitch, actualTimestamp)
         rollWindow.add(roll, actualTimestamp)
@@ -103,25 +129,8 @@ class GestureDetector(private val context: Context) {
         return null
     }
 
-    private fun isCallActive(): Boolean {
-        return try {
-            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            if (tm != null && am != null) {
-                tm.callState != TelephonyManager.CALL_STATE_IDLE ||
-                    am.mode == AudioManager.MODE_IN_COMMUNICATION ||
-                    am.mode == AudioManager.MODE_IN_CALL
-            } else false
-        } catch (e: SecurityException) {
-            false
-        }
-    }
-
     private fun isHorizontalPhoto(pitch: Float, roll: Float): Boolean {
-        // Если камера активна — блокируем ВСЕ жесты
         if (GhostAccessibilityService.isCameraOrGalleryActive) return true
-
-        // Иначе проверяем горизонтальное положение
         return abs(pitch) < 30f && abs(roll) in 45f..90f
     }
 
@@ -134,19 +143,28 @@ class GestureDetector(private val context: Context) {
 
     private fun calculateSpeed(window: CircularBuffer): Float {
         if (window.size < 5) return 0f
-        val values = window.toList()
+        val n = window.size
 
-        val recentPoints = values.takeLast(3)
-        val olderPoints = values.take(3)
+        var recentSum = 0f
+        var olderSum = 0f
+        var recentTimeSum = 0L
+        var olderTimeSum = 0L
 
-        val recentAvg = recentPoints.map { it.value }.average().toFloat()
-        val olderAvg = olderPoints.map { it.value }.average().toFloat()
+        for (i in (n - 3) until n) {
+            recentSum += window.valueAt(i)
+            recentTimeSum += window.timestampAt(i)
+        }
+        for (i in 0 until 3) {
+            olderSum += window.valueAt(i)
+            olderTimeSum += window.timestampAt(i)
+        }
 
+        val recentAvg = recentSum / 3f
+        val olderAvg = olderSum / 3f
         val delta = abs(recentAvg - olderAvg)
 
-        val recentTimeNs = recentPoints.map { it.timestampNs }.average().toLong()
-        val olderTimeNs = olderPoints.map { it.timestampNs }.average().toLong()
-
+        val recentTimeNs = recentTimeSum / 3
+        val olderTimeNs = olderTimeSum / 3
         val timeDiffSec = (recentTimeNs - olderTimeNs) / 1_000_000_000f
 
         return if (timeDiffSec > 0f) delta / timeDiffSec else 0f
@@ -171,32 +189,33 @@ class GestureDetector(private val context: Context) {
     }
 }
 
-class SensorData(val value: Float, val timestampNs: Long)
-
 class CircularBuffer(private val capacity: Int) {
-    private val data = arrayOfNulls<SensorData>(capacity)
+    private val values = FloatArray(capacity)
+    private val timestamps = LongArray(capacity)
     private var writeIndex = 0
     var size = 0
         private set
 
-    fun add(value: Float, timestampNs: Long = 0L) {
-        data[writeIndex] = SensorData(value, timestampNs)
+    fun add(value: Float, timestampNs: Long) {
+        values[writeIndex] = value
+        timestamps[writeIndex] = timestampNs
         writeIndex = (writeIndex + 1) % capacity
         if (size < capacity) size++
     }
 
-    fun toList(): List<SensorData> {
-        if (size == 0) return emptyList()
-        val result = mutableListOf<SensorData>()
+    fun valueAt(i: Int): Float = values[physicalIndex(i)]
+    fun timestampAt(i: Int): Long = timestamps[physicalIndex(i)]
+
+    fun last(): Float = if (size == 0) 0f else values[(writeIndex - 1 + capacity) % capacity]
+
+    private fun physicalIndex(i: Int): Int {
         val start = if (size < capacity) 0 else writeIndex
-        for (i in 0 until size) {
-            data[(start + i) % capacity]?.let { result.add(it) }
-        }
-        return result
+        return (start + i) % capacity
     }
 
     fun clear() {
-        data.fill(null)
+        values.fill(0f)
+        timestamps.fill(0L)
         writeIndex = 0
         size = 0
     }

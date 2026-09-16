@@ -25,11 +25,16 @@ class OnboardingActivity : AppCompatActivity() {
         getSharedPreferences("onboarding_prefs", Context.MODE_PRIVATE)
     }
 
+    // Защита от цикла на Realme: не опрашиваем Settings.Secure при возврате
+    private var openedSettings = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Онбординг проходим только один раз.
+        // Проверки прав — в SettingsActivity.
         val hasOnboarded = onboardingPrefs.getBoolean("has_onboarded", false)
-        if (hasOnboarded && isAccessibilityEnabled() && isBatteryOptimizationIgnored()) {
+        if (hasOnboarded) {
             startMainFlow()
             return
         }
@@ -43,31 +48,23 @@ class OnboardingActivity : AppCompatActivity() {
         btnStart = findViewById(R.id.btnStart)
 
         btnBattery.setOnClickListener {
-            // Каскад Intent для разных прошивок
+            // Безопасный для Google Play: только общий список
             try {
-                // 1. Funtouch OS — прямое окно
-                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                })
+                openedSettings = true
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             } catch (e1: Exception) {
-                Log.e("FlickLock", "Battery intent 1 failed", e1)
+                if (BuildConfig.DEBUG) Log.e("FlickLock", "Battery settings failed", e1)
                 try {
-                    // 2. Realme / общий список
-                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
                 } catch (e2: Exception) {
-                    Log.e("FlickLock", "Battery intent 2 failed", e2)
-                    try {
-                        // 3. Крайний случай
-                        startActivity(Intent(Settings.ACTION_SETTINGS))
-                    } catch (e3: Exception) {
-                        Log.e("FlickLock", "Battery intent 3 failed", e3)
-                    }
+                    if (BuildConfig.DEBUG) Log.e("FlickLock", "Settings failed", e2)
                 }
             }
         }
 
         btnAccessibility.setOnClickListener {
             try {
+                openedSettings = true
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             } catch (e1: Exception) {
                 Log.e("FlickLock", "Accessibility intent failed", e1)
@@ -90,7 +87,11 @@ class OnboardingActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Микро-задержка, чтобы не спамить Settings.Secure на Realme UI
+        // Не опрашиваем систему, если только что вернулись из настроек на Realme
+        if (openedSettings) {
+            openedSettings = false
+            return
+        }
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             updatePermissionsState()
         }, 200)

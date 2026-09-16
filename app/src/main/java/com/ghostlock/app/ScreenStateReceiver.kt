@@ -9,7 +9,7 @@ class ScreenStateReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
-        Log.d("GhostLock", "ScreenStateReceiver: received action $action")
+        if (BuildConfig.DEBUG) Log.d("GhostLock", "ScreenStateReceiver: received action $action")
 
         when (action) {
             Intent.ACTION_USER_PRESENT,
@@ -18,7 +18,7 @@ class ScreenStateReceiver : BroadcastReceiver() {
                     LockService.stoppedByUser = false
                     LockService.startIfPermitted(context)
                 } catch (e: Exception) {
-                    Log.e("GhostLock", "Не удалось запустить LockService из бродкаста $action", e)
+                    if (BuildConfig.DEBUG) Log.e("GhostLock", "Не удалось запустить LockService из бродкаста $action", e)
                 }
             }
         }

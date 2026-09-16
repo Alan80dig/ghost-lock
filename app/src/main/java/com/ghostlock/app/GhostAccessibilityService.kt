@@ -24,7 +24,7 @@ class GhostAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        Log.d("GhostLock", "GhostAccessibilityService connected")
+        if (BuildConfig.DEBUG) Log.d("GhostLock", "GhostAccessibilityService connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -41,7 +41,7 @@ class GhostAccessibilityService : AccessibilityService() {
                     packageName.contains("gallery", ignoreCase = true) ||
                     packageName.contains("video", ignoreCase = true)
 
-            Log.d("GhostLock", "Window: $packageName, camera=$isCameraOrGalleryActive")
+            if (BuildConfig.DEBUG) Log.d("GhostLock", "Window: $packageName, camera=$isCameraOrGalleryActive")
         }
     }
 
@@ -49,7 +49,7 @@ class GhostAccessibilityService : AccessibilityService() {
         // Лончер НЕ игнорируем — он сбрасывает флаг камеры
         if (packageName.contains("launcher")) {
             isCameraOrGalleryActive = false
-            Log.d("GhostLock", "Window: $packageName (Launcher), camera=false")
+            if (BuildConfig.DEBUG) Log.d("GhostLock", "Window: $packageName (Launcher), camera=false")
             return true
         }
         return packageName == "android" ||

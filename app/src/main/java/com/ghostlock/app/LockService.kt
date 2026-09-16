@@ -14,6 +14,8 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import kotlin.math.atan2
+import kotlin.math.sqrt
 
 class LockService : Service(), SensorEventListener {
 
@@ -23,7 +25,6 @@ class LockService : Service(), SensorEventListener {
 
     private var isListening = false
     private var isProximityNear = false
-    private var hasFreshData = false
     private var justLocked = false
     private var screenOnTime = 0L
     private var lastGestureTime = 0L
@@ -107,13 +108,13 @@ class LockService : Service(), SensorEventListener {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
-                        Log.d("GhostLock", "SCREEN_OFF — stop listening, reset camera flag")
+                        if (BuildConfig.DEBUG) Log.d("GhostLock", "SCREEN_OFF — stop listening, reset camera flag")
                         GhostAccessibilityService.resetCameraFlag()
                         justLocked = false
                         stopListening()
                     }
                     Intent.ACTION_SCREEN_ON -> {
-                        Log.d("GhostLock", "SCREEN_ON — start sensors")
+                        if (BuildConfig.DEBUG) Log.d("GhostLock", "SCREEN_ON — start sensors")
                         screenOnTime = System.currentTimeMillis()
                         if (!justLocked) startListening()
                     }
@@ -124,36 +125,38 @@ class LockService : Service(), SensorEventListener {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
         }
-        registerReceiver(screenReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(screenReceiver, filter)
+        }
     }
 
     private fun startListening() {
         if (isListening) return
 
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        val rotation = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         val proximity = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
 
         proximity?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
 
-        if (accel == null && rotation == null) return
+        if (accel == null) return
 
         accel?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-        }
-        rotation?.let {
-            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
 
+        detector.startCallMonitoring()
         isListening = true
         justLocked = false
-        hasFreshData = false
     }
 
     private fun stopListening() {
         sensorManager.unregisterListener(this)
+        detector.stopCallMonitoring()
         isListening = false
         detector.clear()
     }
@@ -180,29 +183,20 @@ class LockService : Service(), SensorEventListener {
                 ax = event.values[0]
                 ay = event.values[1]
                 az = event.values[2]
-                hasFreshData = true
-            }
-            Sensor.TYPE_ROTATION_VECTOR -> {
-                val rotationMatrix = FloatArray(9)
-                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-                val orientation = FloatArray(3)
-                SensorManager.getOrientation(rotationMatrix, orientation)
-                pitch = Math.toDegrees(orientation[1].toDouble()).toFloat()
-                roll = Math.toDegrees(orientation[2].toDouble()).toFloat()
-                hasFreshData = true
+                pitch = Math.toDegrees(atan2(ay.toDouble(), az.toDouble())).toFloat()
+                roll = Math.toDegrees(
+                    atan2(-ax.toDouble(), sqrt((ay * ay + az * az).toDouble()))
+                ).toFloat()
             }
             Sensor.TYPE_PROXIMITY -> {
                 isProximityNear = event.values[0] < 5f
+                return  // proximity не идёт в detector
             }
+            else -> return
         }
 
-        if (!hasFreshData) return
-        hasFreshData = false
-
         if (isProximityNear) return
-
         if (System.currentTimeMillis() - screenOnTime < 500) return
-
         if (justLocked) return
 
         val now = System.currentTimeMillis()
@@ -240,9 +234,9 @@ class LockService : Service(), SensorEventListener {
         val accessibilityService = GhostAccessibilityService.getInstance()
         if (accessibilityService != null) {
             val success = accessibilityService.lockScreen()
-            Log.d("GhostLock", "Lock via Accessibility: $success")
+            if (BuildConfig.DEBUG) Log.d("GhostLock", "Lock via Accessibility: $success")
         } else {
-            Log.e("GhostLock", "Accessibility service not enabled!")
+            if (BuildConfig.DEBUG) Log.e("GhostLock", "Accessibility service not enabled!")
         }
     }
 
