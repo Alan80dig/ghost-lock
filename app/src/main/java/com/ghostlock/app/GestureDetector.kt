@@ -11,6 +11,15 @@ class GestureDetector(private val context: Context) {
 
     companion object {
         private const val CALL_CHECK_INTERVAL_MS = 2000L
+        private const val BUFFER_CAPACITY = 10
+
+        // Динамическая база
+        private const val BASE_ALPHA = 0.01f          // ~2 сек подтягивание
+        private const val FREEZE_THRESHOLD = 10f      // при жесте база замораживается
+
+        // Отсечка dt для calculateSpeed
+        private const val MIN_DT_SEC = 0.003f         // 333 Гц
+        private const val MAX_DT_SEC = 0.05f          // 20 Гц
     }
 
     // ===== isCallActive через Handler =====
@@ -48,82 +57,102 @@ class GestureDetector(private val context: Context) {
     }
     // ===== /isCallActive =====
 
-    private val pitchWindow = CircularBuffer(10)
-    private val rollWindow = CircularBuffer(10)
-    private val accelZWindow = CircularBuffer(10)
+    // ===== Буферы =====
+    private val pitchWindow = CircularBuffer(BUFFER_CAPACITY)
+    private val rollWindow = CircularBuffer(BUFFER_CAPACITY)
+    private val accelZWindow = CircularBuffer(BUFFER_CAPACITY)
+    private val axWindow = CircularBuffer(BUFFER_CAPACITY)   // для FLIP_HAND через axSpeed
 
-    private var rollThreshold = 55f
-    private var pitchThreshold = 70f
-    private var accelYThreshold = 3f
-    private var rollSpeedFlip = 200f
-    private var rollSpeedPocketMin = 100f
-    private var rollSpeedPocketMax = 500f
-    private var accelZThreshold = 6f
-    private var accelZFlip = 8f
-    private var tablePitch = 150f
+    // ===== Динамическая база =====
+    private var basePitch = 0f
+    private var baseRoll = 0f
+    private var baseInitialized = false
+
+    // ===== Пороги =====
+    private var pitchThreshold = 60f       // для deltaPitch (GRAB_SELF)
+    private var rollThreshold = 50f        // для deltaRoll (на будущее)
+    private var axSpeedFlip = 300f         // °/сек для FLIP_HAND
+    private var accelZFlip = 3.5f          // |az| при перевороте проходит через 0
+    private var tablePitch = 150f          // абсолютный pitch для FLIP_TABLE
     private var tableAccel = 0.5f
-    private var stableWindow = 300L
     private var cooldownMs = 3000L
 
     private var lastGestureTime = 0L
-    private var lastStableRoll = 0f
-    private var stableSince = 0L
 
     // ===== Плавная интерполяция порогов =====
     fun updateSensitivity(level: Int) {
         val t = level.coerceIn(0, 100) / 100f
 
-        rollThreshold   = lerp(60f, 15f, t)
-        pitchThreshold  = lerp(90f, 30f, t)
-        accelYThreshold = lerp(4f, 1f, t)
-        cooldownMs      = lerp(5000L, 1000L, t)
+        pitchThreshold = lerp(60f, 15f, t)     // deltaPitch: 60° (мин. чувств.) → 15° (макс.)
+        rollThreshold  = lerp(50f, 12f, t)     // deltaRoll
+        axSpeedFlip    = lerp(300f, 100f, t)   // °/сек по ax
+        accelZFlip     = lerp(5f, 2f, t)
+        cooldownMs     = lerp(4000L, 1000L, t)
     }
 
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
     private fun lerp(a: Long, b: Long, t: Float): Long = (a + (b - a) * t).toLong()
     // ===== /Плавная интерполяция =====
 
-    fun onSensorChanged(pitch: Float, roll: Float, ax: Float, ay: Float, az: Float, timestampNs: Long = 0L): String? {
+    fun onSensorChanged(
+        pitch: Float, roll: Float,
+        ax: Float, ay: Float, az: Float,
+        timestampNs: Long = 0L
+    ): String? {
         if (isCallActiveFlag) return null
         if (isHorizontalPhoto(pitch, roll)) return null
 
         val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
 
-        val azDelta = if (accelZWindow.size > 0) abs(az - accelZWindow.last()) else 0f
+        // ===== 1. Инициализация базы =====
+        if (!baseInitialized) {
+            basePitch = pitch
+            baseRoll = roll
+            baseInitialized = true
+            // Первое событие — только инициализируем, не детектим
+            pitchWindow.add(pitch, actualTimestamp)
+            rollWindow.add(roll, actualTimestamp)
+            accelZWindow.add(az, actualTimestamp)
+            axWindow.add(ax, actualTimestamp)
+            return null
+        }
 
+        // ===== 2. Дельты от базы =====
+        val deltaPitch = abs(pitch - basePitch)
+        val deltaRoll  = abs(roll - baseRoll)
+
+        // ===== 3. Обновление базы (только если жест НЕ в процессе) =====
+        if (deltaPitch < FREEZE_THRESHOLD && deltaRoll < FREEZE_THRESHOLD) {
+            basePitch = BASE_ALPHA * pitch + (1f - BASE_ALPHA) * basePitch
+            baseRoll  = BASE_ALPHA * roll  + (1f - BASE_ALPHA) * baseRoll
+        }
+
+        // ===== 4. Добавление в буферы =====
         pitchWindow.add(pitch, actualTimestamp)
         rollWindow.add(roll, actualTimestamp)
         accelZWindow.add(az, actualTimestamp)
+        axWindow.add(ax, actualTimestamp)
 
         if (pitchWindow.size < 5) return null
 
-        val rollSpeed = calculateSpeed(rollWindow)
-        val rollStable = checkStability(roll)
+        // ===== 5. Скорости =====
+        val axSpeed = calculateSpeed(axWindow)
 
-        if ((ay > accelYThreshold || azDelta > 30) && abs(pitch) > pitchThreshold) {
+        // ===== 6. Проверки жестов =====
+
+        // GRAB_SELF: наклон "на себя" — только по deltaPitch
+        if (deltaPitch > pitchThreshold) {
             return if (cooldownPassed()) "GRAB_SELF" else null
         }
 
-        if (abs(roll) < rollThreshold) return null
-
+        // FLIP_TABLE: положили плашмя экраном вниз (абсолютное положение)
         if (abs(ax) < tableAccel && abs(ay) < tableAccel && abs(pitch) > tablePitch) {
             return if (cooldownPassed()) "FLIP_TABLE" else null
         }
 
-        if (rollSpeed > rollSpeedFlip && abs(az) > accelZFlip) {
+        // FLIP_HAND: поворот "экраном в бок" — через axSpeed
+        if (axSpeed > axSpeedFlip && abs(az) > accelZFlip) {
             return if (cooldownPassed()) "FLIP_HAND" else null
-        }
-
-        if (rollStable && roll < -80f && ax > 5f) {
-            return if (cooldownPassed()) "POCKET_LEFT" else null
-        }
-
-        if (rollStable && roll > 80f && ax < -5f) {
-            return if (cooldownPassed()) "POCKET_RIGHT" else null
-        }
-
-        if (rollSpeed in rollSpeedPocketMin..rollSpeedPocketMax && abs(az) > accelZThreshold) {
-            return if (cooldownPassed()) "POCKET_BACK" else null
         }
 
         return null
@@ -141,54 +170,48 @@ class GestureDetector(private val context: Context) {
         return true
     }
 
+    // ===== calculateSpeed с нормализацией углов и отсечкой dt =====
     private fun calculateSpeed(window: CircularBuffer): Float {
-        if (window.size < 5) return 0f
+        if (window.size < 3) return 0f
         val n = window.size
 
-        var recentSum = 0f
-        var olderSum = 0f
-        var recentTimeSum = 0L
-        var olderTimeSum = 0L
+        var accumulatedDegrees = 0f
+        var totalTimeSec = 0f
 
-        for (i in (n - 3) until n) {
-            recentSum += window.valueAt(i)
-            recentTimeSum += window.timestampAt(i)
+        for (i in 1 until n) {
+            val prevVal = window.valueAt(i - 1)
+            val currVal = window.valueAt(i)
+
+            // Нормализация перехода через квадранты (границы 180 / -180)
+            var diff = abs(currVal - prevVal)
+            if (diff > 180f) diff = 360f - diff
+
+            val dtSec = (window.timestampAt(i) - window.timestampAt(i - 1)) / 1_000_000_000f
+
+            // Отсечка выбросов dt (системные фризы)
+            if (dtSec in MIN_DT_SEC..MAX_DT_SEC) {
+                accumulatedDegrees += diff
+                totalTimeSec += dtSec
+            }
         }
-        for (i in 0 until 3) {
-            olderSum += window.valueAt(i)
-            olderTimeSum += window.timestampAt(i)
-        }
 
-        val recentAvg = recentSum / 3f
-        val olderAvg = olderSum / 3f
-        val delta = abs(recentAvg - olderAvg)
-
-        val recentTimeNs = recentTimeSum / 3
-        val olderTimeNs = olderTimeSum / 3
-        val timeDiffSec = (recentTimeNs - olderTimeNs) / 1_000_000_000f
-
-        return if (timeDiffSec > 0f) delta / timeDiffSec else 0f
+        return if (totalTimeSec > 0f) accumulatedDegrees / totalTimeSec else 0f
     }
-
-    private fun checkStability(currentRoll: Float): Boolean {
-        val now = System.currentTimeMillis()
-        if (abs(currentRoll - lastStableRoll) > 5f) {
-            stableSince = now
-            lastStableRoll = currentRoll
-            return false
-        }
-        return now - stableSince > stableWindow
-    }
+    // ===== /calculateSpeed =====
 
     fun clear() {
         pitchWindow.clear()
         rollWindow.clear()
         accelZWindow.clear()
+        axWindow.clear()
+        baseInitialized = false
+        basePitch = 0f
+        baseRoll = 0f
         lastGestureTime = 0L
-        stableSince = 0L
     }
 }
 
+// ===== CircularBuffer без аллокаций =====
 class CircularBuffer(private val capacity: Int) {
     private val values = FloatArray(capacity)
     private val timestamps = LongArray(capacity)
@@ -203,9 +226,9 @@ class CircularBuffer(private val capacity: Int) {
         if (size < capacity) size++
     }
 
+    /** i = 0 — самый старый, i = size-1 — самый новый */
     fun valueAt(i: Int): Float = values[physicalIndex(i)]
     fun timestampAt(i: Int): Long = timestamps[physicalIndex(i)]
-
     fun last(): Float = if (size == 0) 0f else values[(writeIndex - 1 + capacity) % capacity]
 
     private fun physicalIndex(i: Int): Int {

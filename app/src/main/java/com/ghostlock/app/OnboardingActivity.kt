@@ -48,32 +48,42 @@ class OnboardingActivity : AppCompatActivity() {
         btnStart = findViewById(R.id.btnStart)
 
         btnBattery.setOnClickListener {
-            // Безопасный для Google Play: только общий список
+            // Каскад: прямое окно → общий список → главные настройки
+            openedSettings = true
             try {
-                openedSettings = true
-                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                })
             } catch (e1: Exception) {
-                if (BuildConfig.DEBUG) Log.e("FlickLock", "Battery settings failed", e1)
+                if (BuildConfig.DEBUG) Log.e("FlickLock", "Battery intent 1 failed", e1)
                 try {
-                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                 } catch (e2: Exception) {
-                    if (BuildConfig.DEBUG) Log.e("FlickLock", "Settings failed", e2)
+                    if (BuildConfig.DEBUG) Log.e("FlickLock", "Battery intent 2 failed", e2)
+                    try {
+                        startActivity(Intent(Settings.ACTION_SETTINGS))
+                    } catch (e3: Exception) {
+                        if (BuildConfig.DEBUG) Log.e("FlickLock", "Settings intent failed", e3)
+                    }
                 }
             }
         }
 
         btnAccessibility.setOnClickListener {
-            try {
-                openedSettings = true
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            } catch (e1: Exception) {
-                Log.e("FlickLock", "Accessibility intent failed", e1)
+            openedSettings = true
+            // Задержка 500 мс, чтобы Realme UI не воспринял это как атаку после батареи
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                 try {
-                    startActivity(Intent(Settings.ACTION_SETTINGS))
-                } catch (e2: Exception) {
-                    Log.e("FlickLock", "Settings intent failed", e2)
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                } catch (e1: Exception) {
+                    if (BuildConfig.DEBUG) Log.e("FlickLock", "Accessibility intent failed", e1)
+                    try {
+                        startActivity(Intent(Settings.ACTION_SETTINGS))
+                    } catch (e2: Exception) {
+                        if (BuildConfig.DEBUG) Log.e("FlickLock", "Settings intent failed", e2)
+                    }
                 }
-            }
+            }, 500)
         }
 
         btnStart.setOnClickListener {
