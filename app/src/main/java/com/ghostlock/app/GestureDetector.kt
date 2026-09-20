@@ -16,7 +16,7 @@ class GestureDetector(private val context: Context) {
         private const val BUFFER_CAPACITY = 10
 
         private const val BASE_ALPHA = 0.01f
-        private const val FREEZE_THRESHOLD = 10f
+        private const val FREEZE_SPEED_THRESHOLD = 60f  // °/сек: выше — база замораживается
 
         private const val MIN_DT_SEC = 0.003f
         private const val MAX_DT_SEC = 0.05f
@@ -145,11 +145,21 @@ class GestureDetector(private val context: Context) {
             return null
         }
 
-        // ===== 2. Дельты от базы (со знаком и нормализацией через ±180) =====
+        // ===== 2. Добавляем сэмпл в буферы =====
+        pitchWindow.add(pitch, actualTimestamp)
+        rollWindow.add(roll, actualTimestamp)
+        accelZWindow.add(az, actualTimestamp)
+        axWindow.add(ax, actualTimestamp)
+
+        if (pitchWindow.size < 5) return null  // защита от мусора в первых кадрах
+
+        // ===== 3. Скорость pitch — для адаптивной заморозки базы =====
+        val pitchSpeed = calculateSpeed(pitchWindow)
+
+        // ===== 4. Дельты от базы (со знаком и нормализацией через ±180) =====
         val rawDeltaPitch = pitch - basePitch
         val rawDeltaRoll  = roll - baseRoll
 
-        // Нормализация через ±180 (защита от скачков на границе)
         val deltaPitch = if (rawDeltaPitch > 180f) rawDeltaPitch - 360f
                          else if (rawDeltaPitch < -180f) rawDeltaPitch + 360f
                          else rawDeltaPitch
@@ -158,21 +168,13 @@ class GestureDetector(private val context: Context) {
                         else if (rawDeltaRoll < -180f) rawDeltaRoll + 360f
                         else rawDeltaRoll
 
-        // absoluteDelta нужен для freeze; signed delta — для направления
-        val absoluteDeltaPitch = abs(deltaPitch)
-        val absoluteDeltaRoll  = abs(deltaRoll)
-
-        if (absoluteDeltaPitch < FREEZE_THRESHOLD && absoluteDeltaRoll < FREEZE_THRESHOLD) {
+        // ===== 5. Адаптивное обновление базы =====
+        // Медленное движение (положение) → база подтягивается.
+        // Быстрое движение (жест) → база замораживается.
+        if (pitchSpeed < FREEZE_SPEED_THRESHOLD) {
             basePitch = BASE_ALPHA * pitch + (1f - BASE_ALPHA) * basePitch
             baseRoll  = BASE_ALPHA * roll  + (1f - BASE_ALPHA) * baseRoll
         }
-
-        pitchWindow.add(pitch, actualTimestamp)
-        rollWindow.add(roll, actualTimestamp)
-        accelZWindow.add(az, actualTimestamp)
-        axWindow.add(ax, actualTimestamp)
-
-        if (pitchWindow.size < 5) return null
 
         val axSpeed = calculateSpeed(axWindow)
 
