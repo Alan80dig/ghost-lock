@@ -145,10 +145,24 @@ class GestureDetector(private val context: Context) {
             return null
         }
 
-        val deltaPitch = abs(pitch - basePitch)
-        val deltaRoll  = abs(roll - baseRoll)
+        // ===== 2. Дельты от базы (со знаком и нормализацией через ±180) =====
+        val rawDeltaPitch = pitch - basePitch
+        val rawDeltaRoll  = roll - baseRoll
 
-        if (deltaPitch < FREEZE_THRESHOLD && deltaRoll < FREEZE_THRESHOLD) {
+        // Нормализация через ±180 (защита от скачков на границе)
+        val deltaPitch = if (rawDeltaPitch > 180f) rawDeltaPitch - 360f
+                         else if (rawDeltaPitch < -180f) rawDeltaPitch + 360f
+                         else rawDeltaPitch
+
+        val deltaRoll = if (rawDeltaRoll > 180f) rawDeltaRoll - 360f
+                        else if (rawDeltaRoll < -180f) rawDeltaRoll + 360f
+                        else rawDeltaRoll
+
+        // absoluteDelta нужен для freeze; signed delta — для направления
+        val absoluteDeltaPitch = abs(deltaPitch)
+        val absoluteDeltaRoll  = abs(deltaRoll)
+
+        if (absoluteDeltaPitch < FREEZE_THRESHOLD && absoluteDeltaRoll < FREEZE_THRESHOLD) {
             basePitch = BASE_ALPHA * pitch + (1f - BASE_ALPHA) * basePitch
             baseRoll  = BASE_ALPHA * roll  + (1f - BASE_ALPHA) * baseRoll
         }
