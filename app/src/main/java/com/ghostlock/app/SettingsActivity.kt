@@ -2,7 +2,6 @@ package com.ghostlock.app
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -15,8 +14,10 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var switchService: Switch
     private lateinit var switchBattery: Switch
     private lateinit var tvStatus: TextView
-    private lateinit var seekSensitivity: SeekBar
-    private lateinit var tvSensitivityLabel: TextView
+    private lateinit var seekGrabSensitivity: SeekBar
+    private lateinit var seekFlipSensitivity: SeekBar
+    private lateinit var tvGrabSensitivity: TextView
+    private lateinit var tvFlipSensitivity: TextView
     private lateinit var btnDone: Button
 
     private val prefs by lazy {
@@ -30,8 +31,10 @@ class SettingsActivity : AppCompatActivity() {
         switchService = findViewById(R.id.switchService)
         switchBattery = findViewById(R.id.switchBattery)
         tvStatus = findViewById(R.id.tvStatus)
-        seekSensitivity = findViewById(R.id.seekSensitivity)
-        tvSensitivityLabel = findViewById(R.id.tvSensitivityLabel)
+        seekGrabSensitivity = findViewById(R.id.seekGrabSensitivity)
+        seekFlipSensitivity = findViewById(R.id.seekFlipSensitivity)
+        tvGrabSensitivity = findViewById(R.id.tvGrabSensitivity)
+        tvFlipSensitivity = findViewById(R.id.tvFlipSensitivity)
         btnDone = findViewById(R.id.btnDone)
 
         setupUI()
@@ -62,21 +65,36 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
-        val sensitivity = prefs.getInt("sensitivity", 50)
-        seekSensitivity.progress = sensitivity
-        updateSensitivityLabel(sensitivity)
+        // ===== Ползунок «Наклон к себе» =====
+        val grabSensitivity = prefs.getInt("sensitivity_grab", 50)
+        seekGrabSensitivity.progress = grabSensitivity
+        tvGrabSensitivity.text = "Чувствительность: $grabSensitivity"
 
-        seekSensitivity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+        seekGrabSensitivity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                updateSensitivityLabel(progress)
+                if (!fromUser) return
+                tvGrabSensitivity.text = "Чувствительность: $progress"
+                prefs.edit().putInt("sensitivity_grab", progress).apply()
+                LockService.getInstance()?.updateGrabSensitivity(progress)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                seekBar?.let {
-                    prefs.edit().putInt("sensitivity", it.progress).apply()
-                    LockService.getInstance()?.updateSensitivity(it.progress)
-                }
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        // ===== Ползунок «Поворот экраном вниз» =====
+        val flipSensitivity = prefs.getInt("sensitivity_flip", 50)
+        seekFlipSensitivity.progress = flipSensitivity
+        tvFlipSensitivity.text = "Чувствительность: $flipSensitivity"
+
+        seekFlipSensitivity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                tvFlipSensitivity.text = "Чувствительность: $progress"
+                prefs.edit().putInt("sensitivity_flip", progress).apply()
+                LockService.getInstance()?.updateFlipSensitivity(progress)
             }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
 
         btnDone.setOnClickListener {
@@ -94,7 +112,6 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun requestBatteryOptimization() {
-        // Безопасный для Google Play: только общий список
         try {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         } catch (_: Exception) {
@@ -118,7 +135,6 @@ class SettingsActivity : AppCompatActivity() {
             append("Защита: ${if (serviceEnabled) "🟢 Активна" else "🔴 Отключена"}")
         }
 
-        // Временно убираем слушатель, чтобы не вызвать ложное открытие настроек
         switchBattery.setOnCheckedChangeListener(null)
         switchBattery.isChecked = batteryOptimized
         switchBattery.setOnCheckedChangeListener { _, isChecked ->
@@ -128,16 +144,6 @@ class SettingsActivity : AppCompatActivity() {
                 openBatterySettings()
             }
         }
-    }
-
-    private fun updateSensitivityLabel(progress: Int) {
-        val label = when (progress) {
-            in 0..25 -> "Низкая"
-            in 26..50 -> "Средняя"
-            in 51..75 -> "Высокая"
-            else -> "Максимальная"
-        }
-        tvSensitivityLabel.text = "Чувствительность: $label"
     }
 
     override fun onResume() {

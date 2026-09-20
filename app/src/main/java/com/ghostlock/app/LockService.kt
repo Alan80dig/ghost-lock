@@ -68,8 +68,11 @@ class LockService : Service(), SensorEventListener {
         createNotificationChannel()
 
         val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
-        val sensitivity = prefs.getInt("sensitivity", 50)
-        detector.updateSensitivity(sensitivity)
+        val grabSensitivity = prefs.getInt("sensitivity_grab", 50)
+        val flipSensitivity = prefs.getInt("sensitivity_flip", 50)
+        detector.updateGrabSensitivity(grabSensitivity)
+        detector.updateFlipSensitivity(flipSensitivity)
+                
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -161,8 +164,12 @@ class LockService : Service(), SensorEventListener {
         detector.clear()
     }
 
-    fun updateSensitivity(level: Int) {
-        detector.updateSensitivity(level)
+    fun updateGrabSensitivity(level: Int) {
+        detector.updateGrabSensitivity(level)
+    }
+
+    fun updateFlipSensitivity(level: Int) {
+        detector.updateFlipSensitivity(level)
     }
 
     fun resetLockState() {

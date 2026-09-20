@@ -1,122 +1,59 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:orientation="vertical"
     android:background="#0a0a0f"
     android:padding="24dp">
 
-    <LinearLayout
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/viewPager"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <Button
+        android:id="@+id/btnNext"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="ДАЛЕЕ"
+        android:textColor="#0a0a0f"
+        android:backgroundTint="#00ff88"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/btnBattery"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:text="Настроить батарею"
+        android:textColor="#00ff88"
+        android:backgroundTint="#12121a"
+        android:layout_marginBottom="8dp" />
+
+    <Button
+        android:id="@+id/btnAccessibility"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:text="Включить службу"
+        android:textColor="#00ff88"
+        android:backgroundTint="#12121a"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:text="Настройки → Приложения → FlickLock → Специальные возможности → Включить"
+        android:textSize="11sp"
+        android:textColor="#666666"
+        android:gravity="center"
+        android:layout_marginBottom="16dp" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="FlickLock"
-            android:textSize="32sp"
-            android:textColor="#00ff88"
-            android:layout_marginBottom="8dp" />
+    <Button
+        android:id="@+id/btnStart"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="НАЧАТЬ"
+        android:textColor="#0a0a0f"
+        android:backgroundTint="#00ff88" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Snap your screen shut"
-            android:textSize="14sp"
-            android:textColor="#666666"
-            android:layout_marginBottom="32dp" />
-
-        <!-- Батарея -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="8dp">
-
-            <CheckBox
-                android:id="@+id/checkBattery"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:clickable="false"
-                android:focusable="false" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Работа в фоне"
-                android:textSize="16sp"
-                android:textColor="#ffffff" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Разрешите FlickLock работать без ограничений батареи"
-            android:textSize="12sp"
-            android:textColor="#666666"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btnBattery"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="РАЗРЕШИТЬ"
-            android:textColor="#00ff88"
-            android:backgroundTint="#1a1a2a"
-            android:layout_marginBottom="24dp" />
-
-        <!-- Accessibility -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginBottom="8dp">
-
-            <CheckBox
-                android:id="@+id/checkAccessibility"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:clickable="false"
-                android:focusable="false" />
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Служба специальных возможностей"
-                android:textSize="16sp"
-                android:textColor="#ffffff" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="FlickLock использует только GLOBAL_ACTION_LOCK_SCREEN.\nНе читает текст, не видит экран, не собирает данные."
-            android:textSize="12sp"
-            android:textColor="#666666"
-            android:layout_marginBottom="8dp" />
-
-        <Button
-            android:id="@+id/btnAccessibility"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:text="ВКЛЮЧИТЬ"
-            android:textColor="#00ff88"
-            android:backgroundTint="#1a1a2a"
-            android:layout_marginBottom="32dp" />
-
-        <!-- Финальная кнопка -->
-        <Button
-            android:id="@+id/btnStart"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:text="ЗАПУСТИТЬ"
-            android:textColor="#0a0a0f"
-            android:backgroundTint="#00ff88"
-            android:enabled="false" />
-
-    </LinearLayout>
-</ScrollView>
+</LinearLayout>

@@ -38,22 +38,57 @@
             android:letterSpacing="0.1"
             android:layout_marginBottom="8dp" />
 
+        <!-- Наклон к себе -->
         <TextView
-            android:id="@+id/tvSensitivityLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Чувствительность: Средняя"
+            android:text="Наклон к себе"
             android:textSize="14sp"
             android:textColor="#cccccc"
-            android:layout_marginBottom="8dp" />
+            android:layout_marginTop="8dp" />
+
+        <TextView
+            android:id="@+id/tvGrabSensitivity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Чувствительность: 50"
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:layout_marginTop="4dp" />
 
         <SeekBar
-            android:id="@+id/seekSensitivity"
+            android:id="@+id/seekGrabSensitivity"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:max="100"
             android:progress="50"
-            android:layout_marginBottom="16dp" />
+            android:layout_marginTop="8dp" />
+
+        <!-- Поворот экраном вниз -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Поворот экраном вниз"
+            android:textSize="14sp"
+            android:textColor="#cccccc"
+            android:layout_marginTop="24dp" />
+
+        <TextView
+            android:id="@+id/tvFlipSensitivity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Чувствительность: 50"
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:layout_marginTop="4dp" />
+
+        <SeekBar
+            android:id="@+id/seekFlipSensitivity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="50"
+            android:layout_marginTop="8dp" />
 
         <Button
             android:id="@+id/btnDone"
@@ -62,6 +97,7 @@
             android:text="ГОТОВО"
             android:textColor="#0a0a0f"
             android:backgroundTint="#00ff88"
+            android:layout_marginTop="32dp"
             android:layout_marginBottom="32dp" />
 
         <LinearLayout

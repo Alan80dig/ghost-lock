@@ -1,6 +1,10 @@
 package com.ghostlock.app
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
+import android.hardware.camera2.CameraManager
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
@@ -14,6 +18,10 @@ class GhostAccessibilityService : AccessibilityService() {
         var isCameraOrGalleryActive: Boolean = false
             private set
 
+        @Volatile
+        var isCameraInUse: Boolean = false
+            private set
+
         fun getInstance(): GhostAccessibilityService? = instance
 
         fun resetCameraFlag() {
@@ -21,9 +29,47 @@ class GhostAccessibilityService : AccessibilityService() {
         }
     }
 
+    private lateinit var cameraManager: CameraManager
+
+    // Активные (занятые) камеры. Может быть больше одной (фронт + зад).
+    private val busyCameras = mutableSetOf<String>()
+
+    private val cameraAvailabilityCallback = object : CameraManager.AvailabilityCallback() {
+        override fun onCameraUnavailable(cameraId: String) {
+            busyCameras.add(cameraId)
+            isCameraInUse = busyCameras.isNotEmpty()
+            if (BuildConfig.DEBUG) {
+                Log.d("GhostLock", "Camera busy: $cameraId, total busy=${busyCameras.size}")
+            }
+        }
+
+        override fun onCameraAvailable(cameraId: String) {
+            busyCameras.remove(cameraId)
+            isCameraInUse = busyCameras.isNotEmpty()
+            if (BuildConfig.DEBUG) {
+                Log.d("GhostLock", "Camera free: $cameraId, total busy=${busyCameras.size}")
+            }
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+
+        // Регистрируем отслеживание камеры
+        try {
+            cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            cameraManager.registerAvailabilityCallback(
+                cameraAvailabilityCallback,
+                Handler(Looper.getMainLooper())
+            )
+            if (BuildConfig.DEBUG) {
+                Log.d("GhostLock", "Camera availability callback registered")
+            }
+        } catch (e: Exception) {
+            Log.e("GhostLock", "Failed to register camera callback", e)
+        }
+
         if (BuildConfig.DEBUG) Log.d("GhostLock", "GhostAccessibilityService connected")
     }
 
@@ -31,25 +77,26 @@ class GhostAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val packageName = event.packageName?.toString() ?: return
 
-            // Игнорируем системные пакеты
             if (isSystemUiOrLauncher(packageName)) {
                 return
             }
 
-            // Обновляем флаг: true если камера/галерея/видео, false если обычное приложение
             isCameraOrGalleryActive = packageName.contains("camera", ignoreCase = true) ||
                     packageName.contains("gallery", ignoreCase = true) ||
                     packageName.contains("video", ignoreCase = true)
 
-            if (BuildConfig.DEBUG) Log.d("GhostLock", "Window: $packageName, camera=$isCameraOrGalleryActive")
+            if (BuildConfig.DEBUG) {
+                Log.d("GhostLock", "Window: $packageName, camera=$isCameraOrGalleryActive")
+            }
         }
     }
 
     private fun isSystemUiOrLauncher(packageName: String): Boolean {
-        // Лончер НЕ игнорируем — он сбрасывает флаг камеры
         if (packageName.contains("launcher")) {
             isCameraOrGalleryActive = false
-            if (BuildConfig.DEBUG) Log.d("GhostLock", "Window: $packageName (Launcher), camera=false")
+            if (BuildConfig.DEBUG) {
+                Log.d("GhostLock", "Window: $packageName (Launcher), camera=false")
+            }
             return true
         }
         return packageName == "android" ||
@@ -62,6 +109,16 @@ class GhostAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+
+        // Снимаем callback
+        try {
+            if (::cameraManager.isInitialized) {
+                cameraManager.unregisterAvailabilityCallback(cameraAvailabilityCallback)
+            }
+        } catch (e: Exception) {
+            Log.e("GhostLock", "Failed to unregister camera callback", e)
+        }
+
         if (instance == this) {
             instance = null
         }
