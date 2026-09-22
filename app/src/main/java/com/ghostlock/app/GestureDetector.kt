@@ -99,7 +99,7 @@ class GestureDetector(private val context: Context) {
     /** Ползунок «Наклон к себе» */
     fun updateGrabSensitivity(level: Int) {
         val t = level.coerceIn(0, 100) / 100f
-        grabPitchThreshold = lerp(60f, 15f, t)
+        grabPitchThreshold = lerp(70f, 20f, t)
 
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "Grab sensitivity: level=$level, pitchThreshold=$grabPitchThreshold")
