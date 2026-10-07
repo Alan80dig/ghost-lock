@@ -1,4 +1,4 @@
-package com.ghostlock.app
+package com.flicklock.app
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context

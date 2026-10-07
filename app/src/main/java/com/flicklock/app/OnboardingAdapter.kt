@@ -1,4 +1,4 @@
-package com.ghostlock.app
+package com.flicklock.app
 
 import android.view.LayoutInflater
 import android.view.View
