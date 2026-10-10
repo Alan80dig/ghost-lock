@@ -11,7 +11,7 @@ import kotlin.math.abs
 class GestureDetector(private val context: Context) {
 
     companion object {
-        private const val TAG = "GhostLock"
+        private const val TAG = "FlickLock"
         private const val CALL_CHECK_INTERVAL_MS = 2000L
         private const val BUFFER_CAPACITY = 10
 

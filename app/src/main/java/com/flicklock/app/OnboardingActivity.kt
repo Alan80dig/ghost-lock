@@ -116,11 +116,11 @@ class OnboardingActivity : AppCompatActivity() {
         try {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         } catch (e: Exception) {
-            Log.e("GhostLock", "Accessibility intent failed", e)
+            Log.e("FlickLock", "Accessibility intent failed", e)
             try {
                 startActivity(Intent(Settings.ACTION_SETTINGS))
             } catch (e2: Exception) {
-                Log.e("GhostLock", "Settings intent failed", e2)
+                Log.e("FlickLock", "Settings intent failed", e2)
             }
         }
     }
@@ -134,15 +134,15 @@ class OnboardingActivity : AppCompatActivity() {
                 data = Uri.parse("package:$packageName")
             })
         } catch (e1: Exception) {
-            Log.e("GhostLock", "Battery intent 1 failed", e1)
+            Log.e("FlickLock", "Battery intent 1 failed", e1)
             try {
                 startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             } catch (e2: Exception) {
-                Log.e("GhostLock", "Battery intent 2 failed", e2)
+                Log.e("FlickLock", "Battery intent 2 failed", e2)
                 try {
                     startActivity(Intent(Settings.ACTION_SETTINGS))
                 } catch (e3: Exception) {
-                    Log.e("GhostLock", "Battery intent 3 failed", e3)
+                    Log.e("FlickLock", "Battery intent 3 failed", e3)
                 }
             }
         }
@@ -190,7 +190,7 @@ class OnboardingActivity : AppCompatActivity() {
             }
             false
         } catch (e: Exception) {
-            Log.e("GhostLock", "isAccessibilityEnabled failed", e)
+            Log.e("FlickLock", "isAccessibilityEnabled failed", e)
             false
         }
     }

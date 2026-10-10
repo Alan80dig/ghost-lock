@@ -11,7 +11,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="FlickLock"
-        android:theme="@style/Theme.GhostLock">
+        android:theme="@style/Theme.FlickLock">
 
         <activity
             android:name=".OnboardingActivity"

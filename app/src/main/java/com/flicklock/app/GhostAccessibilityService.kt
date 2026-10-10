@@ -39,7 +39,7 @@ class GhostAccessibilityService : AccessibilityService() {
             busyCameras.add(cameraId)
             isCameraInUse = busyCameras.isNotEmpty()
             if (BuildConfig.DEBUG) {
-                Log.d("GhostLock", "Camera busy: $cameraId, total busy=${busyCameras.size}")
+                Log.d("FlickLock", "Camera busy: $cameraId, total busy=${busyCameras.size}")
             }
         }
 
@@ -47,7 +47,7 @@ class GhostAccessibilityService : AccessibilityService() {
             busyCameras.remove(cameraId)
             isCameraInUse = busyCameras.isNotEmpty()
             if (BuildConfig.DEBUG) {
-                Log.d("GhostLock", "Camera free: $cameraId, total busy=${busyCameras.size}")
+                Log.d("FlickLock", "Camera free: $cameraId, total busy=${busyCameras.size}")
             }
         }
     }
@@ -64,13 +64,13 @@ class GhostAccessibilityService : AccessibilityService() {
                 Handler(Looper.getMainLooper())
             )
             if (BuildConfig.DEBUG) {
-                Log.d("GhostLock", "Camera availability callback registered")
+                Log.d("FlickLock", "Camera availability callback registered")
             }
         } catch (e: Exception) {
-            Log.e("GhostLock", "Failed to register camera callback", e)
+            Log.e("FlickLock", "Failed to register camera callback", e)
         }
 
-        if (BuildConfig.DEBUG) Log.d("GhostLock", "GhostAccessibilityService connected")
+        if (BuildConfig.DEBUG) Log.d("FlickLock", "GhostAccessibilityService connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -86,7 +86,7 @@ class GhostAccessibilityService : AccessibilityService() {
                     packageName.contains("video", ignoreCase = true)
 
             if (BuildConfig.DEBUG) {
-                Log.d("GhostLock", "Window: $packageName, camera=$isCameraOrGalleryActive")
+                Log.d("FlickLock", "Window: $packageName, camera=$isCameraOrGalleryActive")
             }
         }
     }
@@ -95,7 +95,7 @@ class GhostAccessibilityService : AccessibilityService() {
         if (packageName.contains("launcher")) {
             isCameraOrGalleryActive = false
             if (BuildConfig.DEBUG) {
-                Log.d("GhostLock", "Window: $packageName (Launcher), camera=false")
+                Log.d("FlickLock", "Window: $packageName (Launcher), camera=false")
             }
             return true
         }
@@ -116,7 +116,7 @@ class GhostAccessibilityService : AccessibilityService() {
                 cameraManager.unregisterAvailabilityCallback(cameraAvailabilityCallback)
             }
         } catch (e: Exception) {
-            Log.e("GhostLock", "Failed to unregister camera callback", e)
+            Log.e("FlickLock", "Failed to unregister camera callback", e)
         }
 
         if (instance == this) {
