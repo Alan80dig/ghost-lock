@@ -13,7 +13,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Ghost Lock"
+            android:text="@string/settings_title"
             android:textSize="28sp"
             android:textColor="#00ff88"
             android:layout_marginBottom="24dp" />
@@ -124,7 +124,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Рекомендуется включить, чтобы Ghost Lock не отключался системой"
+            android:text="@string/battery_hint"
             android:textSize="11sp"
             android:textColor="#666666"
             android:layout_marginBottom="16dp" />

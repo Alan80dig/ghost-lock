@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">FlickLock</string>
+    <string name="settings_title">FlickLock</string>
+    <string name="battery_hint">Рекомендуется включить, чтобы FlickLock не отключался системой</string>
     <string name="accessibility_description">FlickLock использует службу специальных возможностей для мгновенной блокировки экрана по жесту встряхивания. Служба не собирает и не передаёт никакие данные.</string>
 </resources>
