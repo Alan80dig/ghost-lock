@@ -1,4 +1,4 @@
-package com.ghostlock.app
+package com.flicklock.app
 
 import android.app.*
 import android.content.*

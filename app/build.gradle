@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace 'com.ghostlock.app'
+    namespace 'com.flicklock.app'
     compileSdk 35
 
     defaultConfig {
