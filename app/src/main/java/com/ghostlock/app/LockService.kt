@@ -111,13 +111,13 @@ class LockService : Service(), SensorEventListener {
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_SCREEN_OFF -> {
-                        if (BuildConfig.DEBUG) Log.d("GhostLock", "SCREEN_OFF — stop listening, reset camera flag")
+                        if (BuildConfig.DEBUG) Log.d("FlickLock", "SCREEN_OFF — stop listening, reset camera flag")
                         GhostAccessibilityService.resetCameraFlag()
                         justLocked = false
                         stopListening()
                     }
                     Intent.ACTION_SCREEN_ON -> {
-                        if (BuildConfig.DEBUG) Log.d("GhostLock", "SCREEN_ON — start sensors")
+                        if (BuildConfig.DEBUG) Log.d("FlickLock", "SCREEN_ON — start sensors")
                         screenOnTime = System.currentTimeMillis()
                         if (!justLocked) startListening()
                     }
@@ -241,9 +241,9 @@ class LockService : Service(), SensorEventListener {
         val accessibilityService = GhostAccessibilityService.getInstance()
         if (accessibilityService != null) {
             val success = accessibilityService.lockScreen()
-            if (BuildConfig.DEBUG) Log.d("GhostLock", "Lock via Accessibility: $success")
+            if (BuildConfig.DEBUG) Log.d("FlickLock", "Lock via Accessibility: $success")
         } else {
-            if (BuildConfig.DEBUG) Log.e("GhostLock", "Accessibility service not enabled!")
+            if (BuildConfig.DEBUG) Log.e("FlickLock", "Accessibility service not enabled!")
         }
     }
 
