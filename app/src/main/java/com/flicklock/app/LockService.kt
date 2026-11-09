@@ -67,10 +67,8 @@ class LockService : Service(), SensorEventListener {
         registerScreenReceiver()
         createNotificationChannel()
 
-        val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
-        val grabSensitivity = prefs.getInt("sensitivity_grab", 50)
+        val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)        
         val flipSensitivity = prefs.getInt("sensitivity_flip", 50)
-        detector.updateGrabSensitivity(grabSensitivity)
         detector.updateFlipSensitivity(flipSensitivity)
                 
     }
@@ -163,11 +161,7 @@ class LockService : Service(), SensorEventListener {
         isListening = false
         detector.clear()
     }
-
-    fun updateGrabSensitivity(level: Int) {
-        detector.updateGrabSensitivity(level)
-    }
-
+    
     fun updateFlipSensitivity(level: Int) {
         detector.updateFlipSensitivity(level)
     }

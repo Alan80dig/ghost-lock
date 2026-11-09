@@ -13,10 +13,8 @@ class SettingsActivity : AppCompatActivity() {
 
     private lateinit var switchService: Switch
     private lateinit var switchBattery: Switch
-    private lateinit var tvStatus: TextView
-    private lateinit var seekGrabSensitivity: SeekBar
-    private lateinit var seekFlipSensitivity: SeekBar
-    private lateinit var tvGrabSensitivity: TextView
+    private lateinit var tvStatus: TextView    
+    private lateinit var seekFlipSensitivity: SeekBar    
     private lateinit var tvFlipSensitivity: TextView
     private lateinit var btnDone: Button
 
@@ -30,10 +28,8 @@ class SettingsActivity : AppCompatActivity() {
 
         switchService = findViewById(R.id.switchService)
         switchBattery = findViewById(R.id.switchBattery)
-        tvStatus = findViewById(R.id.tvStatus)
-        seekGrabSensitivity = findViewById(R.id.seekGrabSensitivity)
-        seekFlipSensitivity = findViewById(R.id.seekFlipSensitivity)
-        tvGrabSensitivity = findViewById(R.id.tvGrabSensitivity)
+        tvStatus = findViewById(R.id.tvStatus)        
+        seekFlipSensitivity = findViewById(R.id.seekFlipSensitivity)        
         tvFlipSensitivity = findViewById(R.id.tvFlipSensitivity)
         btnDone = findViewById(R.id.btnDone)
 
@@ -63,23 +59,7 @@ class SettingsActivity : AppCompatActivity() {
             } else {
                 openBatterySettings()
             }
-        }
-
-        // ===== Ползунок «Наклон к себе» =====
-        val grabSensitivity = prefs.getInt("sensitivity_grab", 50)
-        seekGrabSensitivity.progress = grabSensitivity
-        tvGrabSensitivity.text = "Чувствительность: $grabSensitivity"
-
-        seekGrabSensitivity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (!fromUser) return
-                tvGrabSensitivity.text = "Чувствительность: $progress"
-                prefs.edit().putInt("sensitivity_grab", progress).apply()
-                LockService.getInstance()?.updateGrabSensitivity(progress)
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
+        }        
 
         // ===== Ползунок «Поворот экраном вниз» =====
         val flipSensitivity = prefs.getInt("sensitivity_flip", 50)

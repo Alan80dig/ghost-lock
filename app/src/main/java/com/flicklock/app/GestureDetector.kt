@@ -13,10 +13,8 @@ class GestureDetector(private val context: Context) {
     companion object {
         private const val TAG = "FlickLock"
         private const val CALL_CHECK_INTERVAL_MS = 2000L
-        private const val BUFFER_CAPACITY = 10
-
-        private const val BASE_ALPHA = 0.01f
-        private const val FREEZE_SPEED_THRESHOLD = 60f  // °/сек: выше — база замораживается
+        private const val BUFFER_CAPACITY = 10      
+        
 
         private const val MIN_DT_SEC = 0.003f
         private const val MAX_DT_SEC = 0.05f
@@ -71,46 +69,31 @@ class GestureDetector(private val context: Context) {
     private val pitchWindow = CircularBuffer(BUFFER_CAPACITY)
     private val rollWindow = CircularBuffer(BUFFER_CAPACITY)
     private val accelZWindow = CircularBuffer(BUFFER_CAPACITY)
-    private val axWindow = CircularBuffer(BUFFER_CAPACITY)
-
-    private var basePitch = 0f
-    private var baseRoll = 0f
-    private var baseInitialized = false
+    private val axWindow = CircularBuffer(BUFFER_CAPACITY)   
+    
+    
 
     // ===== Пороги =====
-    // GRAB_SELF (наклон к себе) — deltaPitch
-    private var grabPitchThreshold = 60f
-
+    
     // FLIP_HAND (поворот экраном вниз) — axSpeed + az
     private var flipAxSpeedThreshold = 120f
     private var flipAzThreshold = 5f
-
-    // FLIP_TABLE (общее для обоих)
     private var tablePitch = 150f
     private var tableAccel = 0.5f
 
+    
     // Cooldown — общий
     private var cooldownMs = 3000L
 
     private var lastGestureTime = 0L
 
     // ===== Раздельная настройка чувствительности =====
-
-    /** Ползунок «Наклон к себе» */
-    fun updateGrabSensitivity(level: Int) {
-        val t = level.coerceIn(0, 100) / 100f
-        grabPitchThreshold = lerp(70f, 20f, t)
-
-        if (BuildConfig.DEBUG) {
-            Log.d(TAG, "Grab sensitivity: level=$level, pitchThreshold=$grabPitchThreshold")
-        }
-    }
-
+    
     /** Ползунок «Поворот экраном вниз» */
     fun updateFlipSensitivity(level: Int) {
         val t = level.coerceIn(0, 100) / 100f
-        flipAxSpeedThreshold = lerp(200f, 120f, t)   // было 120 → 70
-        flipAzThreshold = lerp(6f, 3f, t)            // было 5 → 2
+        flipAxSpeedThreshold = lerp(180f, 80f, t)   // было 120 → 70, 
+        flipAzThreshold = lerp(6f, 2f, t)            // было 5 → 2
 
         if (BuildConfig.DEBUG) {
              Log.d(TAG, "Flip sensitivity: level=$level, axSpeedFlip=$flipAxSpeedThreshold, azThreshold=$flipAzThreshold")
@@ -122,110 +105,62 @@ class GestureDetector(private val context: Context) {
     // ===== /Раздельная настройка =====
 
     fun onSensorChanged(
-        pitch: Float, roll: Float,
-        ax: Float, ay: Float, az: Float,
-        timestampNs: Long = 0L
-    ): String? {
-        if (isCallActiveFlag) return null
-        if (isHorizontalPhoto(pitch, roll)) return null
+    pitch: Float, roll: Float,
+    ax: Float, ay: Float, az: Float,
+    timestampNs: Long = 0L
+): String? {
+    if (isCallActiveFlag) return null
+    if (isHorizontalPhoto(pitch, roll)) return null
 
-        val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
+    val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
 
-        if (!baseInitialized) {
-            basePitch = pitch
-            baseRoll = roll
-            baseInitialized = true
-            pitchWindow.add(pitch, actualTimestamp)
-            rollWindow.add(roll, actualTimestamp)
-            accelZWindow.add(az, actualTimestamp)
-            axWindow.add(ax, actualTimestamp)
+    pitchWindow.add(pitch, actualTimestamp)
+    rollWindow.add(roll, actualTimestamp)
+    accelZWindow.add(az, actualTimestamp)
+    axWindow.add(ax, actualTimestamp)
+
+    if (axWindow.size < 5) return null  // защита от мусора в первых кадрах
+
+    val axSpeed = calculateSpeed(axWindow)
+
+    // ===== FLIP_TABLE: плашмя экраном вниз на стол =====
+    if (abs(ax) < tableAccel && abs(ay) < tableAccel && abs(pitch) > tablePitch) {
+        if (cooldownPassed()) {
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "Base initialized: basePitch=$basePitch, baseRoll=$baseRoll")
-            }
-            return null
-        }
-
-        // ===== 2. Добавляем сэмпл в буферы =====
-        pitchWindow.add(pitch, actualTimestamp)
-        rollWindow.add(roll, actualTimestamp)
-        accelZWindow.add(az, actualTimestamp)
-        axWindow.add(ax, actualTimestamp)
-
-        if (pitchWindow.size < 5) return null  // защита от мусора в первых кадрах
-
-        // ===== 3. Скорость pitch — для адаптивной заморозки базы =====
-        val pitchSpeed = calculateSpeed(pitchWindow)
-
-        // ===== 4. Дельты от базы (со знаком и нормализацией через ±180) =====
-        val rawDeltaPitch = pitch - basePitch
-        val rawDeltaRoll  = roll - baseRoll
-
-        val deltaPitch = if (rawDeltaPitch > 180f) rawDeltaPitch - 360f
-                         else if (rawDeltaPitch < -180f) rawDeltaPitch + 360f
-                         else rawDeltaPitch
-
-        val deltaRoll = if (rawDeltaRoll > 180f) rawDeltaRoll - 360f
-                        else if (rawDeltaRoll < -180f) rawDeltaRoll + 360f
-                        else rawDeltaRoll
-
-        // ===== 5. Адаптивное обновление базы =====
-        // Медленное движение (положение) → база подтягивается.
-        // Быстрое движение (жест) → база замораживается.
-        if (pitchSpeed < FREEZE_SPEED_THRESHOLD) {
-            basePitch = BASE_ALPHA * pitch + (1f - BASE_ALPHA) * basePitch
-            baseRoll  = BASE_ALPHA * roll  + (1f - BASE_ALPHA) * baseRoll
-        }
-
-        val axSpeed = calculateSpeed(axWindow)
-
-        // ===== GRAB_SELF: наклон к себе =====
-        if (deltaPitch > grabPitchThreshold) {
-            if (cooldownPassed()) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "Gesture: GRAB_SELF, deltaPitch=$deltaPitch (threshold=$grabPitchThreshold), basePitch=$basePitch, pitch=$pitch")
+                 Log.d(TAG, "Gesture: FLIP_TABLE, pitch=$pitch, ax=$ax, ay=$ay")
                 }
-                return "GRAB_SELF"
+         return "FLIP_TABLE"
+      }
+      return null
+     }
+
+    // ===== FLIP_HAND: поворот экраном вниз =====
+    if (axSpeed > flipAxSpeedThreshold && abs(az) > flipAzThreshold) {
+        if (cooldownPassed()) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Gesture: FLIP_HAND, axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
             }
-            return null
+            return "FLIP_HAND"
         }
-
-        if (BuildConfig.DEBUG && deltaPitch > grabPitchThreshold * NEAR_MISS_RATIO && shouldLog()) {
-            Log.d(TAG, "Near-miss GRAB_SELF: deltaPitch=$deltaPitch (threshold=$grabPitchThreshold), basePitch=$basePitch, pitch=$pitch")
-        }
-
-        // ===== FLIP_TABLE: плашмя экраном вниз =====
-        if (abs(ax) < tableAccel && abs(ay) < tableAccel && abs(pitch) > tablePitch) {
-            if (cooldownPassed()) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "Gesture: FLIP_TABLE, pitch=$pitch, ax=$ax, ay=$ay")
-                }
-                return "FLIP_TABLE"
-            }
-            return null
-        }
-
-        // ===== FLIP_HAND: поворот экраном вниз =====
-        if (axSpeed > flipAxSpeedThreshold && abs(az) > flipAzThreshold) {
-            if (cooldownPassed()) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "Gesture: FLIP_HAND, axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
-                }
-                return "FLIP_HAND"
-            }
-            return null
-        }
-
-        if (BuildConfig.DEBUG && axSpeed > flipAxSpeedThreshold * NEAR_MISS_RATIO && shouldLog()) {
-            Log.d(TAG, "Near-miss FLIP_HAND: axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
-        }
-
         return null
     }
 
+    if (BuildConfig.DEBUG && axSpeed > flipAxSpeedThreshold * NEAR_MISS_RATIO && shouldLog()) {
+        Log.d(TAG, "Near-miss FLIP_HAND: axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
+    }
+
+    return null
+}
+
     private fun isHorizontalPhoto(pitch: Float, roll: Float): Boolean {
-        if (GhostAccessibilityService.isCameraOrGalleryActive ||
-            GhostAccessibilityService.isCameraInUse) return true
-            return abs(pitch) < 30f && abs(roll) in 45f..90f
+       if (GhostAccessibilityService.isCameraOrGalleryActive) return true
+
+       // Проверка видеозвонка (WhatsApp, Telegram, Skype) — AudioManager.mode
+       val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+       if (am?.mode == AudioManager.MODE_IN_COMMUNICATION ||
+           am?.mode == AudioManager.MODE_IN_CALL) return true
+
+       return abs(pitch) < 30f && abs(roll) in 45f..90f
     }
 
     private fun cooldownPassed(): Boolean {
@@ -264,10 +199,7 @@ class GestureDetector(private val context: Context) {
         pitchWindow.clear()
         rollWindow.clear()
         accelZWindow.clear()
-        axWindow.clear()
-        baseInitialized = false
-        basePitch = 0f
-        baseRoll = 0f
+        axWindow.clear()      
         lastGestureTime = 0L
     }
 }
