@@ -13,8 +13,7 @@ class GestureDetector(private val context: Context) {
     companion object {
         private const val TAG = "FlickLock"
         private const val CALL_CHECK_INTERVAL_MS = 2000L
-        private const val BUFFER_CAPACITY = 10      
-        
+        private const val BUFFER_CAPACITY = 10
 
         private const val MIN_DT_SEC = 0.003f
         private const val MAX_DT_SEC = 0.05f
@@ -69,34 +68,31 @@ class GestureDetector(private val context: Context) {
     private val pitchWindow = CircularBuffer(BUFFER_CAPACITY)
     private val rollWindow = CircularBuffer(BUFFER_CAPACITY)
     private val accelZWindow = CircularBuffer(BUFFER_CAPACITY)
-    private val axWindow = CircularBuffer(BUFFER_CAPACITY)   
-    
-    
+    private val axWindow = CircularBuffer(BUFFER_CAPACITY)
 
     // ===== Пороги =====
-    
+
     // FLIP_HAND (поворот экраном вниз) — axSpeed + az
     private var flipAxSpeedThreshold = 120f
     private var flipAzThreshold = 5f
     private var tablePitch = 150f
     private var tableAccel = 0.5f
 
-    
     // Cooldown — общий
     private var cooldownMs = 3000L
 
     private var lastGestureTime = 0L
 
     // ===== Раздельная настройка чувствительности =====
-    
+
     /** Ползунок «Поворот экраном вниз» */
     fun updateFlipSensitivity(level: Int) {
         val t = level.coerceIn(0, 100) / 100f
-        flipAxSpeedThreshold = lerp(180f, 80f, t)   // было 120 → 70, 
-        flipAzThreshold = lerp(6f, 2f, t)            // было 5 → 2
+        flipAxSpeedThreshold = lerp(150f, 60f, t)   // level=85 → 73.5
+        flipAzThreshold = lerp(6f, 2f, t)            // level=85 → 2.6
 
         if (BuildConfig.DEBUG) {
-             Log.d(TAG, "Flip sensitivity: level=$level, axSpeedFlip=$flipAxSpeedThreshold, azThreshold=$flipAzThreshold")
+            Log.d(TAG, "Flip sensitivity: level=$level, axSpeedFlip=$flipAxSpeedThreshold, azThreshold=$flipAzThreshold")
         }
     }
 
@@ -105,63 +101,70 @@ class GestureDetector(private val context: Context) {
     // ===== /Раздельная настройка =====
 
     fun onSensorChanged(
-    pitch: Float, roll: Float,
-    ax: Float, ay: Float, az: Float,
-    timestampNs: Long = 0L
-): String? {
-    if (isCallActiveFlag) return null
-    if (isHorizontalPhoto(pitch, roll)) return null
+        pitch: Float, roll: Float,
+        ax: Float, ay: Float, az: Float,
+        timestampNs: Long = 0L
+    ): String? {
+        if (isCallActiveFlag) return null
+        if (isHorizontalPhoto(pitch, roll)) return null
 
-    val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
+        val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
 
-    pitchWindow.add(pitch, actualTimestamp)
-    rollWindow.add(roll, actualTimestamp)
-    accelZWindow.add(az, actualTimestamp)
-    axWindow.add(ax, actualTimestamp)
+        pitchWindow.add(pitch, actualTimestamp)
+        rollWindow.add(roll, actualTimestamp)
+        accelZWindow.add(az, actualTimestamp)
+        axWindow.add(ax, actualTimestamp)
 
-    if (axWindow.size < 5) return null  // защита от мусора в первых кадрах
+        if (axWindow.size < 5) return null  // защита от мусора в первых кадрах
 
-    val axSpeed = calculateSpeed(axWindow)
+        val axSpeed = calculateSpeed(axWindow)
 
-    // ===== FLIP_TABLE: плашмя экраном вниз на стол =====
-    if (abs(ax) < tableAccel && abs(ay) < tableAccel && abs(pitch) > tablePitch) {
-        if (cooldownPassed()) {
-            if (BuildConfig.DEBUG) {
-                 Log.d(TAG, "Gesture: FLIP_TABLE, pitch=$pitch, ax=$ax, ay=$ay")
+        // ===== FLIP_TABLE: плашмя экраном вниз на стол =====
+        if (abs(ax) < tableAccel && abs(ay) < tableAccel && abs(pitch) > tablePitch) {
+            if (cooldownPassed()) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "Gesture: FLIP_TABLE, pitch=$pitch, ax=$ax, ay=$ay")
                 }
-         return "FLIP_TABLE"
-      }
-      return null
-     }
-
-    // ===== FLIP_HAND: поворот экраном вниз =====
-    if (axSpeed > flipAxSpeedThreshold && abs(az) > flipAzThreshold) {
-        if (cooldownPassed()) {
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "Gesture: FLIP_HAND, axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
+                return "FLIP_TABLE"
             }
-            return "FLIP_HAND"
+            return null
         }
+
+        // ===== FLIP_HAND: поворот экраном вниз =====
+        if (axSpeed > flipAxSpeedThreshold && abs(az) > flipAzThreshold) {
+            if (cooldownPassed()) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "Gesture: FLIP_HAND, axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
+                }
+                return "FLIP_HAND"
+            }
+            return null
+        }
+
+        if (BuildConfig.DEBUG && axSpeed > flipAxSpeedThreshold * NEAR_MISS_RATIO && shouldLog()) {
+            Log.d(TAG, "Near-miss FLIP_HAND: axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
+        }
+
         return null
     }
 
-    if (BuildConfig.DEBUG && axSpeed > flipAxSpeedThreshold * NEAR_MISS_RATIO && shouldLog()) {
-        Log.d(TAG, "Near-miss FLIP_HAND: axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
-    }
-
-    return null
-}
-
     private fun isHorizontalPhoto(pitch: Float, roll: Float): Boolean {
-       if (GhostAccessibilityService.isCameraOrGalleryActive) return true
+     // 1. Камера/галерея по foreground-пакету
+     if (GhostAccessibilityService.isCameraOrGalleryActive) return true
 
-       // Проверка видеозвонка (WhatsApp, Telegram, Skype) — AudioManager.mode
-       val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-       if (am?.mode == AudioManager.MODE_IN_COMMUNICATION ||
-           am?.mode == AudioManager.MODE_IN_CALL) return true
+     // 2. Камера реально занята (WhatsApp/MAX/Telegram фото/видео/видеозаметка).
+     //    Любая камера (фронт/зад) — мессенджеры по умолчанию открывают фронталку.
+     //    Face Wake отсекается в GhostAccessibilityService по foreground-пакету.
+     if (GhostAccessibilityService.isCameraInUse) return true
 
-       return abs(pitch) < 30f && abs(roll) in 45f..90f
-    }
+     // 3. Видеозвонок — AudioManager.mode (страховка, если камера ещё не открылась)
+     val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+     if (am?.mode == AudioManager.MODE_IN_COMMUNICATION ||
+        am?.mode == AudioManager.MODE_IN_CALL) return true
+
+     // 4. Горизонтальное фото
+     return abs(pitch) < 30f && abs(roll) in 45f..90f
+   }
 
     private fun cooldownPassed(): Boolean {
         val now = System.currentTimeMillis()
@@ -199,7 +202,7 @@ class GestureDetector(private val context: Context) {
         pitchWindow.clear()
         rollWindow.clear()
         accelZWindow.clear()
-        axWindow.clear()      
+        axWindow.clear()
         lastGestureTime = 0L
     }
 }

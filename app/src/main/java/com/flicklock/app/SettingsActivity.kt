@@ -62,7 +62,7 @@ class SettingsActivity : AppCompatActivity() {
         }        
 
         // ===== Ползунок «Поворот экраном вниз» =====
-        val flipSensitivity = prefs.getInt("sensitivity_flip", 50)
+        val flipSensitivity = prefs.getInt("sensitivity_flip",85 )
         seekFlipSensitivity.progress = flipSensitivity
         tvFlipSensitivity.text = "Чувствительность: $flipSensitivity"
 

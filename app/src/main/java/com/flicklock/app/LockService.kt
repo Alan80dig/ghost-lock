@@ -68,7 +68,7 @@ class LockService : Service(), SensorEventListener {
         createNotificationChannel()
 
         val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)        
-        val flipSensitivity = prefs.getInt("sensitivity_flip", 50)
+        val flipSensitivity = prefs.getInt("sensitivity_flip", 85)
         detector.updateFlipSensitivity(flipSensitivity)
                 
     }
