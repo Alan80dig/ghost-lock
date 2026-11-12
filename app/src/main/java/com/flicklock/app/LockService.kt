@@ -7,6 +7,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.IBinder
 import android.os.VibrationEffect
@@ -32,7 +33,7 @@ class LockService : Service(), SensorEventListener {
     companion object {
         const val CHANNEL_ID = "ghost_lock_service"
         const val NOTIFICATION_ID = 1
-        private const val DEBOUNCE_MS = 3000L
+        private const val DEBOUNCE_MS = 1500L
 
         @Volatile
         private var instance: LockService? = null
@@ -59,19 +60,28 @@ class LockService : Service(), SensorEventListener {
     }
 
     override fun onCreate() {
-        super.onCreate()
-        instance = this
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        detector = GestureDetector(this)
+       super.onCreate()
+       instance = this
+       sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+       detector = GestureDetector(this)
 
-        registerScreenReceiver()
-        createNotificationChannel()
+       registerScreenReceiver()
+       createNotificationChannel()
 
-        val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)        
-        val flipSensitivity = prefs.getInt("sensitivity_flip", 85)
-        detector.updateFlipSensitivity(flipSensitivity)
-                
-    }
+       val prefs = getSharedPreferences("ghost_prefs", Context.MODE_PRIVATE)
+
+       // Миграция: старый sensitivity_flip → sensitivity_twist (один раз)
+       if (!prefs.getBoolean("migrated_twist_v1", false)) {
+           val old = prefs.getInt("sensitivity_flip", 85)
+           prefs.edit()
+            .putInt("sensitivity_twist", old)
+            .putBoolean("migrated_twist_v1", true)
+            .apply()
+     }
+
+     val twistSensitivity = prefs.getInt("sensitivity_twist", 85)
+     detector.updateTwistSensitivity(twistSensitivity)
+ }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -151,6 +161,7 @@ class LockService : Service(), SensorEventListener {
         }
 
         detector.startCallMonitoring()
+        detector.resetCooldown()   // ← новый метод: lastGestureTime = now
         isListening = true
         justLocked = false
     }
@@ -162,8 +173,8 @@ class LockService : Service(), SensorEventListener {
         detector.clear()
     }
     
-    fun updateFlipSensitivity(level: Int) {
-        detector.updateFlipSensitivity(level)
+    fun updateTwistSensitivity(level: Int) {
+        detector.updateTwistSensitivity(level)
     }
 
     fun resetLockState() {
@@ -177,28 +188,33 @@ class LockService : Service(), SensorEventListener {
     private var az = 0f
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (!isListening) return
+       if (!isListening) return
 
         when (event.sensor.type) {
-            Sensor.TYPE_ACCELEROMETER -> {
-                ax = event.values[0]
-                ay = event.values[1]
-                az = event.values[2]
-                pitch = Math.toDegrees(atan2(ay.toDouble(), az.toDouble())).toFloat()
-                roll = Math.toDegrees(
-                    atan2(-ax.toDouble(), sqrt((ay * ay + az * az).toDouble()))
-                ).toFloat()
-            }
-            Sensor.TYPE_PROXIMITY -> {
-                isProximityNear = event.values[0] < 5f
-                return  // proximity не идёт в detector
-            }
-            else -> return
+           Sensor.TYPE_ACCELEROMETER -> {
+               ax = event.values[0]
+               ay = event.values[1]
+               az = event.values[2]
+               pitch = Math.toDegrees(atan2(ay.toDouble(), az.toDouble())).toFloat()
+               roll = Math.toDegrees(
+                   atan2(-ax.toDouble(), sqrt((ay * ay + az * az).toDouble()))
+               ).toFloat()
+           }
+           Sensor.TYPE_PROXIMITY -> {
+               isProximityNear = event.values[0] < 5f
+               return
+           }
+           else -> return
         }
 
         if (isProximityNear) return
         if (System.currentTimeMillis() - screenOnTime < 500) return
         if (justLocked) return
+
+        // TWIST работает только в портретной ориентации (кино/игры в альбомной — не блокируем)
+        if (resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT) {
+            return
+         }
 
         val now = System.currentTimeMillis()
         if (now - lastGestureTime < DEBOUNCE_MS) return

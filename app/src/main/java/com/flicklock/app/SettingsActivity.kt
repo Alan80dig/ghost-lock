@@ -62,7 +62,7 @@ class SettingsActivity : AppCompatActivity() {
         }        
 
         // ===== Ползунок «Поворот экраном вниз» =====
-        val flipSensitivity = prefs.getInt("sensitivity_flip",85 )
+        val flipSensitivity = prefs.getInt("sensitivity_twist",85 )
         seekFlipSensitivity.progress = flipSensitivity
         tvFlipSensitivity.text = "Чувствительность: $flipSensitivity"
 
@@ -70,8 +70,8 @@ class SettingsActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
                 tvFlipSensitivity.text = "Чувствительность: $progress"
-                prefs.edit().putInt("sensitivity_flip", progress).apply()
-                LockService.getInstance()?.updateFlipSensitivity(progress)
+                prefs.edit().putInt("sensitivity_twist", progress).apply()
+                LockService.getInstance()?.updateTwistSensitivity(progress)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}

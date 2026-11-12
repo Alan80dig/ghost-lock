@@ -15,14 +15,22 @@ class GestureDetector(private val context: Context) {
         private const val CALL_CHECK_INTERVAL_MS = 2000L
         private const val BUFFER_CAPACITY = 10
 
+        private const val BASE_ALPHA = 0.05f
+        private const val FREEZE_SPEED_THRESHOLD = 25f  // °/сек: выше — база замораживается
+
         private const val MIN_DT_SEC = 0.003f
         private const val MAX_DT_SEC = 0.05f
 
-        private const val NEAR_MISS_RATIO = 0.8f
         private const val LOG_THROTTLE_MS = 500L
+
+        // Устойчивость: deltaRoll должен держаться выше порога не меньше этого времени
+        private const val TWIST_HOLD_MS = 100L
     }
 
+    // ===== Поля TWIST =====
+    private var baseFrozen = false
     private var lastLogTime = 0L
+
     private fun shouldLog(): Boolean {
         val now = System.currentTimeMillis()
         if (now - lastLogTime < LOG_THROTTLE_MS) return false
@@ -65,40 +73,38 @@ class GestureDetector(private val context: Context) {
     }
     // ===== /isCallActive =====
 
-    private val pitchWindow = CircularBuffer(BUFFER_CAPACITY)
     private val rollWindow = CircularBuffer(BUFFER_CAPACITY)
-    private val accelZWindow = CircularBuffer(BUFFER_CAPACITY)
-    private val axWindow = CircularBuffer(BUFFER_CAPACITY)
 
-    // ===== Пороги =====
+    // ===== TWIST: адаптивная база roll =====
+    private var baseRoll = 0f
+    private var baseRollInitialized = false
 
-    // FLIP_HAND (поворот экраном вниз) — axSpeed + az
-    private var flipAxSpeedThreshold = 120f
-    private var flipAzThreshold = 5f
-    private var tablePitch = 150f
-    private var tableAccel = 0.5f
+    // Устойчивость: с какого момента deltaRoll держится выше порога (0 = не держится)
+    private var twistSinceMs = 0L
 
-    // Cooldown — общий
-    private var cooldownMs = 3000L
+    // ===== Порог TWIST =====
+    // Ползунок «Поворот кисти»: level 0 → 80°, level 100 → 45°
+    private var twistRollThreshold = 60f
 
+    // Cooldown
+    private var cooldownMs = 1500L
     private var lastGestureTime = 0L
 
-    // ===== Раздельная настройка чувствительности =====
+    // ===== Настройка чувствительности =====
 
-    /** Ползунок «Поворот экраном вниз» */
-    fun updateFlipSensitivity(level: Int) {
+    /** Ползунок «Поворот кисти» */
+    fun updateTwistSensitivity(level: Int) {
         val t = level.coerceIn(0, 100) / 100f
-        flipAxSpeedThreshold = lerp(150f, 60f, t)   // level=85 → 73.5
-        flipAzThreshold = lerp(6f, 2f, t)            // level=85 → 2.6
+        twistRollThreshold = lerp(80f, 45f, t)
 
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "Flip sensitivity: level=$level, axSpeedFlip=$flipAxSpeedThreshold, azThreshold=$flipAzThreshold")
+            Log.d(TAG, "Twist sensitivity: level=$level, rollThreshold=$twistRollThreshold")
         }
     }
 
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
-    // ===== /Раздельная настройка =====
+    // ===== /Настройка чувствительности =====
 
     fun onSensorChanged(
         pitch: Float, roll: Float,
@@ -106,65 +112,105 @@ class GestureDetector(private val context: Context) {
         timestampNs: Long = 0L
     ): String? {
         if (isCallActiveFlag) return null
-        if (isHorizontalPhoto(pitch, roll)) return null
+        if (isHorizontalPhoto()) return null
 
         val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
 
-        pitchWindow.add(pitch, actualTimestamp)
+        // ===== 1. Первый сэмпл: инициализация базы =====
+        if (!baseRollInitialized) {
+            baseRoll = roll
+            baseRollInitialized = true
+            rollWindow.add(roll, actualTimestamp)
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Base roll initialized: baseRoll=$baseRoll")
+            }
+            return null
+        }
+
+        // ===== 2. Добавляем сэмпл в буфер =====
         rollWindow.add(roll, actualTimestamp)
-        accelZWindow.add(az, actualTimestamp)
-        axWindow.add(ax, actualTimestamp)
 
-        if (axWindow.size < 5) return null  // защита от мусора в первых кадрах
+        if (rollWindow.size < 5) return null
 
-        val axSpeed = calculateSpeed(axWindow)
+        // ===== 3. Скорость roll =====
+        val rollSpeed = calculateSpeed(rollWindow)
 
-        // ===== FLIP_TABLE: плашмя экраном вниз на стол =====
-        if (abs(ax) < tableAccel && abs(ay) < tableAccel && abs(pitch) > tablePitch) {
-            if (cooldownPassed()) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "Gesture: FLIP_TABLE, pitch=$pitch, ax=$ax, ay=$ay")
-                }
-                return "FLIP_TABLE"
-            }
+        // ===== 4. deltaRoll от базы с нормализацией через ±180 =====
+        val rawDelta = roll - baseRoll
+        val deltaRoll = when {
+            rawDelta > 180f -> rawDelta - 360f
+            rawDelta < -180f -> rawDelta + 360f
+            else -> rawDelta
+        }
+
+        val absDelta = abs(deltaRoll)
+        val now = System.currentTimeMillis()
+
+        // ===== 5. Заморозка базы с гистерезисом =====
+        // Как только deltaRoll приблизился к порогу — база замерла.
+        // Разморозка — только когда deltaRoll реально мал (телефон в покое).
+        if (absDelta > twistRollThreshold * 0.5f) {
+            baseFrozen = true
+        } else if (absDelta < twistRollThreshold * 0.2f) {
+            baseFrozen = false
+        }
+        if (!baseFrozen && rollSpeed < FREEZE_SPEED_THRESHOLD) {
+            baseRoll = BASE_ALPHA * roll + (1f - BASE_ALPHA) * baseRoll
+        }
+
+        // ===== 6. Асимметрия: только «экран вниз» (deltaRoll < 0) =====
+        // Тыльная сторона (deltaRoll > 0) игнорируется — нет ложных срабатываний.
+        // Для левши поменять знак на > 0f.
+        if (deltaRoll > 0f) {
+            twistSinceMs = 0L
             return null
         }
 
-        // ===== FLIP_HAND: поворот экраном вниз =====
-        if (axSpeed > flipAxSpeedThreshold && abs(az) > flipAzThreshold) {
-            if (cooldownPassed()) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "Gesture: FLIP_HAND, axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
-                }
-                return "FLIP_HAND"
-            }
-            return null
-        }
+        // ===== 7. Проверка TWIST с гистерезисом =====
+        val upper = twistRollThreshold
+        val lower = twistRollThreshold * 0.8f
 
-        if (BuildConfig.DEBUG && axSpeed > flipAxSpeedThreshold * NEAR_MISS_RATIO && shouldLog()) {
-            Log.d(TAG, "Near-miss FLIP_HAND: axSpeed=$axSpeed (threshold=$flipAxSpeedThreshold), az=$az (threshold=$flipAzThreshold)")
+        if (absDelta > upper) {
+            if (twistSinceMs == 0L) {
+                twistSinceMs = now
+                if (BuildConfig.DEBUG && shouldLog()) {
+                    Log.d(TAG, "TWIST candidate: deltaRoll=$deltaRoll (threshold=$twistRollThreshold), roll=$roll, baseRoll=$baseRoll, az=$az")
+                }
+            } else if (now - twistSinceMs >= TWIST_HOLD_MS) {
+                if (cooldownPassed()) {
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "Gesture: TWIST, deltaRoll=$deltaRoll (threshold=$twistRollThreshold), roll=$roll, az=$az, pitch=$pitch, hold=${now - twistSinceMs}ms")
+                    }
+                    twistSinceMs = 0L
+                    return "TWIST"
+                }
+                return null
+            }
+        } else if (absDelta < lower) {
+            if (twistSinceMs != 0L && BuildConfig.DEBUG && shouldLog()) {
+                Log.d(TAG, "TWIST cancelled: deltaRoll=$deltaRoll (threshold=$twistRollThreshold)")
+            }
+            twistSinceMs = 0L
         }
+        // между lower и upper — НЕ сбрасываем, hold продолжает копиться
 
         return null
     }
 
-    private fun isHorizontalPhoto(pitch: Float, roll: Float): Boolean {
-     // 1. Камера/галерея по foreground-пакету
-     if (GhostAccessibilityService.isCameraOrGalleryActive) return true
+    private fun isHorizontalPhoto(): Boolean {
+        // 1. Камера/галерея по foreground-пакету
+        if (GhostAccessibilityService.isCameraOrGalleryActive) return true
 
-     // 2. Камера реально занята (WhatsApp/MAX/Telegram фото/видео/видеозаметка).
-     //    Любая камера (фронт/зад) — мессенджеры по умолчанию открывают фронталку.
-     //    Face Wake отсекается в GhostAccessibilityService по foreground-пакету.
-     if (GhostAccessibilityService.isCameraInUse) return true
+        // 2. Камера реально занята (WhatsApp/MAX/Telegram фото/видео/видеозаметка).
+        if (GhostAccessibilityService.isCameraInUse) return true
 
-     // 3. Видеозвонок — AudioManager.mode (страховка, если камера ещё не открылась)
-     val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-     if (am?.mode == AudioManager.MODE_IN_COMMUNICATION ||
-        am?.mode == AudioManager.MODE_IN_CALL) return true
+        // 3. Видеозвонок — AudioManager.mode
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        if (am?.mode == AudioManager.MODE_IN_COMMUNICATION ||
+            am?.mode == AudioManager.MODE_IN_CALL) return true
 
-     // 4. Горизонтальное фото
-     return abs(pitch) < 30f && abs(roll) in 45f..90f
-   }
+        return false
+    }
 
     private fun cooldownPassed(): Boolean {
         val now = System.currentTimeMillis()
@@ -199,11 +245,16 @@ class GestureDetector(private val context: Context) {
     }
 
     fun clear() {
-        pitchWindow.clear()
         rollWindow.clear()
-        accelZWindow.clear()
-        axWindow.clear()
-        lastGestureTime = 0L
+        baseRollInitialized = false
+        baseRoll = 0f
+        baseFrozen = false
+        twistSinceMs = 0L
+        // lastGestureTime НЕ сбрасываем — cooldown управляется через resetCooldown()
+    }
+
+    fun resetCooldown() {
+        lastGestureTime = System.currentTimeMillis()
     }
 }
 
