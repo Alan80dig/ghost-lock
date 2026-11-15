@@ -79,8 +79,16 @@ class LockService : Service(), SensorEventListener {
             .apply()
      }
 
-     val twistSensitivity = prefs.getInt("sensitivity_twist", 85)
-     detector.updateTwistSensitivity(twistSensitivity)
+      // Миграция v2: сброс на 50 (новый дефолт, lerp(72,32))
+      if (!prefs.getBoolean("migrated_twist_v2", false)) {
+           prefs.edit()
+          .putInt("sensitivity_twist", 50)
+          .putBoolean("migrated_twist_v2", true)
+          .apply()
+      }
+
+      val twistSensitivity = prefs.getInt("sensitivity_twist", 50)
+      detector.updateTwistSensitivity(twistSensitivity)
  }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -212,14 +220,12 @@ class LockService : Service(), SensorEventListener {
         if (justLocked) return
 
         // TWIST работает только в портретной ориентации (кино/игры в альбомной — не блокируем)
-        if (resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT) {
-            return
-         }
+        val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
 
         val now = System.currentTimeMillis()
         if (now - lastGestureTime < DEBOUNCE_MS) return
 
-        val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az, event.timestamp)
+        val gesture = detector.onSensorChanged(pitch, roll, ax, ay, az, isPortrait, event.timestamp)
         if (gesture != null) {
             lastGestureTime = now
             triggerLock()

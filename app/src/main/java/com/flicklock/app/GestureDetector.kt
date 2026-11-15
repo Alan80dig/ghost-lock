@@ -58,6 +58,7 @@ class GestureDetector(private val context: Context) {
         isCallActiveFlag = false
     }
 
+    @Suppress("DEPRECATION")
     private fun checkCallActiveNow(): Boolean {
         return try {
             val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
@@ -83,19 +84,20 @@ class GestureDetector(private val context: Context) {
     private var twistSinceMs = 0L
 
     // ===== Порог TWIST =====
-    // Ползунок «Поворот кисти»: level 0 → 80°, level 100 → 45°
-    private var twistRollThreshold = 60f
+    // Ползунок «Чувствительность»: level 0 → 72°, level 100 → 32°
+    // level=50 → порог 52° (нижняя граница комфортного диапазона)
+    private var twistRollThreshold = 52f
 
     // Cooldown
-    private var cooldownMs = 1500L
+    private var cooldownMs = 500L
     private var lastGestureTime = 0L
 
     // ===== Настройка чувствительности =====
 
-    /** Ползунок «Поворот кисти» */
+    /** Ползунок «Чувствительность» */
     fun updateTwistSensitivity(level: Int) {
         val t = level.coerceIn(0, 100) / 100f
-        twistRollThreshold = lerp(80f, 45f, t)
+        twistRollThreshold = lerp(72f, 32f, t)   // level=50 → 52°
 
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "Twist sensitivity: level=$level, rollThreshold=$twistRollThreshold")
@@ -109,10 +111,20 @@ class GestureDetector(private val context: Context) {
     fun onSensorChanged(
         pitch: Float, roll: Float,
         ax: Float, ay: Float, az: Float,
+        isPortrait: Boolean,
         timestampNs: Long = 0L
     ): String? {
         if (isCallActiveFlag) return null
         if (isHorizontalPhoto()) return null
+
+        // ===== Альбомная ориентация: база следует за roll, жесты не копим =====
+        if (!isPortrait) {
+            baseRoll = roll
+            baseRollInitialized = true
+            baseFrozen = false
+            twistSinceMs = 0L
+            return null
+        }
 
         val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
 
@@ -147,8 +159,6 @@ class GestureDetector(private val context: Context) {
         val now = System.currentTimeMillis()
 
         // ===== 5. Заморозка базы с гистерезисом =====
-        // Как только deltaRoll приблизился к порогу — база замерла.
-        // Разморозка — только когда deltaRoll реально мал (телефон в покое).
         if (absDelta > twistRollThreshold * 0.5f) {
             baseFrozen = true
         } else if (absDelta < twistRollThreshold * 0.2f) {
@@ -159,16 +169,20 @@ class GestureDetector(private val context: Context) {
         }
 
         // ===== 6. Асимметрия: только «экран вниз» (deltaRoll < 0) =====
-        // Тыльная сторона (deltaRoll > 0) игнорируется — нет ложных срабатываний.
-        // Для левши поменять знак на > 0f.
         if (deltaRoll > 0f) {
+            // База «сбилась» (аномальное положение при SCREEN_ON, телефон «на боку»)
+            // — подтягиваем, чтобы deltaRoll вернулся к 0.
+            // Иначе асимметрия + baseFrozen заблокируют жесты навсегда («зависание»).
+            if (rollSpeed < FREEZE_SPEED_THRESHOLD) {
+                baseRoll = BASE_ALPHA * roll + (1f - BASE_ALPHA) * baseRoll
+            }
             twistSinceMs = 0L
             return null
         }
 
         // ===== 7. Проверка TWIST с гистерезисом =====
         val upper = twistRollThreshold
-        val lower = twistRollThreshold * 0.8f
+        val lower = twistRollThreshold * 0.2f
 
         if (absDelta > upper) {
             if (twistSinceMs == 0L) {
@@ -192,23 +206,16 @@ class GestureDetector(private val context: Context) {
             }
             twistSinceMs = 0L
         }
-        // между lower и upper — НЕ сбрасываем, hold продолжает копиться
 
         return null
     }
 
     private fun isHorizontalPhoto(): Boolean {
-        // 1. Камера/галерея по foreground-пакету
         if (GhostAccessibilityService.isCameraOrGalleryActive) return true
-
-        // 2. Камера реально занята (WhatsApp/MAX/Telegram фото/видео/видеозаметка).
         if (GhostAccessibilityService.isCameraInUse) return true
-
-        // 3. Видеозвонок — AudioManager.mode
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         if (am?.mode == AudioManager.MODE_IN_COMMUNICATION ||
             am?.mode == AudioManager.MODE_IN_CALL) return true
-
         return false
     }
 

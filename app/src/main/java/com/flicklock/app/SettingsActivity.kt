@@ -62,9 +62,17 @@ class SettingsActivity : AppCompatActivity() {
         }        
 
         // ===== Ползунок «Поворот экраном вниз» =====
-        val flipSensitivity = prefs.getInt("sensitivity_twist",85 )
-        seekFlipSensitivity.progress = flipSensitivity
-        tvFlipSensitivity.text = "Чувствительность: $flipSensitivity"
+        // Миграция v2 (дубль с LockService)
+        if (!prefs.getBoolean("migrated_twist_v2", false)) {
+            prefs.edit()
+                .putInt("sensitivity_twist", 50)
+                .putBoolean("migrated_twist_v2", true)
+                .apply()
+        }
+
+        val twistSensitivity = prefs.getInt("sensitivity_twist", 50)
+        seekFlipSensitivity.progress = twistSensitivity
+        tvFlipSensitivity.text = "Чувствительность: $twistSensitivity"
 
         seekFlipSensitivity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
