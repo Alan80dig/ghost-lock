@@ -170,6 +170,7 @@ class LockService : Service(), SensorEventListener {
 
         detector.startCallMonitoring()
         detector.resetCooldown()   // ← новый метод: lastGestureTime = now
+        detector.resetBaseFrozen()   // ← страховка: сброс baseFrozen при SCREEN_ON
         isListening = true
         justLocked = false
     }
@@ -178,6 +179,7 @@ class LockService : Service(), SensorEventListener {
         sensorManager.unregisterListener(this)
         detector.stopCallMonitoring()
         isListening = false
+        detector.resetBaseFrozen()   // ← страховка: сброс baseFrozen при SCREEN_OFF        
         detector.clear()
     }
     

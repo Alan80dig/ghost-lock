@@ -7,6 +7,8 @@ import android.os.Looper
 import android.telephony.TelephonyManager
 import android.util.Log
 import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.sqrt
 
 class GestureDetector(private val context: Context) {
 
@@ -16,18 +18,26 @@ class GestureDetector(private val context: Context) {
         private const val BUFFER_CAPACITY = 10
 
         private const val BASE_ALPHA = 0.05f
-        private const val FREEZE_SPEED_THRESHOLD = 25f  // °/сек: выше — база замораживается
+        private const val FREEZE_SPEED_THRESHOLD = 25f
 
         private const val MIN_DT_SEC = 0.003f
         private const val MAX_DT_SEC = 0.05f
 
         private const val LOG_THROTTLE_MS = 500L
 
-        // Устойчивость: deltaRoll должен держаться выше порога не меньше этого времени
         private const val TWIST_HOLD_MS = 100L
+
+        private const val MIN_Z_DROP = 0.35f
+
+        // При наклоне к себе/от себя (pitch) roll ~ 0 — не жест.
+        // При повороте кисти (TWIST) |roll| = 52..72.
+        private const val MIN_ABS_ROLL = 15f
+
+        // При SCREEN_ON телефон может быть перевёрнут (az < 0) —
+        // не инициализируем базу, ждём нормального положения.
+        private const val MIN_AZ_FOR_BASE = -3f
     }
 
-    // ===== Поля TWIST =====
     private var baseFrozen = false
     private var lastLogTime = 0L
 
@@ -74,39 +84,33 @@ class GestureDetector(private val context: Context) {
     }
     // ===== /isCallActive =====
 
-    private val rollWindow = CircularBuffer(BUFFER_CAPACITY)
+    // ===== 3D-вектор гравитации =====
+    private val vectorWindow = VectorCircularBuffer(BUFFER_CAPACITY)
 
-    // ===== TWIST: адаптивная база roll =====
-    private var baseRoll = 0f
-    private var baseRollInitialized = false
+    private var baseGx = 0f
+    private var baseGy = 0f
+    private var baseGz = 1f
+    private var baseInitialized = false
 
-    // Устойчивость: с какого момента deltaRoll держится выше порога (0 = не держится)
     private var twistSinceMs = 0L
 
-    // ===== Порог TWIST =====
-    // Ползунок «Чувствительность»: level 0 → 72°, level 100 → 32°
-    // level=50 → порог 52° (нижняя граница комфортного диапазона)
-    private var twistRollThreshold = 52f
+    // Ползунок «Чувствительность»: level 0 → 85°, level 100 → 45°
+    // level=50 → порог 65°
+    private var twistAngleThreshold = 65f
 
-    // Cooldown
     private var cooldownMs = 500L
     private var lastGestureTime = 0L
 
-    // ===== Настройка чувствительности =====
-
-    /** Ползунок «Чувствительность» */
     fun updateTwistSensitivity(level: Int) {
         val t = level.coerceIn(0, 100) / 100f
-        twistRollThreshold = lerp(72f, 32f, t)   // level=50 → 52°
+        twistAngleThreshold = lerp(85f, 45f, t)
 
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "Twist sensitivity: level=$level, rollThreshold=$twistRollThreshold")
+            Log.d(TAG, "Twist sensitivity: level=$level, angleThreshold=$twistAngleThreshold")
         }
     }
 
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
-
-    // ===== /Настройка чувствительности =====
 
     fun onSensorChanged(
         pitch: Float, roll: Float,
@@ -117,97 +121,126 @@ class GestureDetector(private val context: Context) {
         if (isCallActiveFlag) return null
         if (isHorizontalPhoto()) return null
 
-        // ===== Альбомная ориентация: база следует за roll, жесты не копим =====
-        if (!isPortrait) {
-            baseRoll = roll
-            baseRollInitialized = true
-            baseFrozen = false
-            twistSinceMs = 0L
-            return null
-        }
+        val magnitude = sqrt(ax * ax + ay * ay + az * az)
+        if (magnitude < 1.0f) return null
+
+        val isCleanGravity = magnitude in 7.5f..12.2f
+
+        val nx = ax / magnitude
+        val ny = ay / magnitude
+        val nz = az / magnitude
 
         val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
 
-        // ===== 1. Первый сэмпл: инициализация базы =====
-        if (!baseRollInitialized) {
-            baseRoll = roll
-            baseRollInitialized = true
-            rollWindow.add(roll, actualTimestamp)
+        // 1. Инициализация базового вектора (только в нормальном положении)
+        if (!baseInitialized) {
+            if (az < MIN_AZ_FOR_BASE) {
+                if (BuildConfig.DEBUG && shouldLog()) {
+                    Log.d(TAG, "Base 3D skipped (az=$az < $MIN_AZ_FOR_BASE, phone flipped)")
+                }
+                return null
+            }
+            baseGx = nx
+            baseGy = ny
+            baseGz = nz
+            baseInitialized = true
+            baseFrozen = false
+            vectorWindow.add(nx, ny, nz, actualTimestamp)
             if (BuildConfig.DEBUG) {
-                Log.d(TAG, "Base roll initialized: baseRoll=$baseRoll")
+                Log.d(TAG, "Base 3D initialized: g=($baseGx, $baseGy, $baseGz), az=$az")
             }
             return null
         }
 
-        // ===== 2. Добавляем сэмпл в буфер =====
-        rollWindow.add(roll, actualTimestamp)
+        vectorWindow.add(nx, ny, nz, actualTimestamp)
+        if (vectorWindow.size < 5) return null
 
-        if (rollWindow.size < 5) return null
+        // 2. Угловая скорость 3D (°/сек)
+        val angularSpeed = calculate3DAngularSpeed(vectorWindow)
 
-        // ===== 3. Скорость roll =====
-        val rollSpeed = calculateSpeed(rollWindow)
-
-        // ===== 4. deltaRoll от базы с нормализацией через ±180 =====
-        val rawDelta = roll - baseRoll
-        val deltaRoll = when {
-            rawDelta > 180f -> rawDelta - 360f
-            rawDelta < -180f -> rawDelta + 360f
-            else -> rawDelta
-        }
-
-        val absDelta = abs(deltaRoll)
+        // 3. Истинный 3D-угол и zDrop
+        val angleDeg = angleBetween(baseGx, baseGy, baseGz, nx, ny, nz)
+        val zDrop = baseGz - nz
         val now = System.currentTimeMillis()
 
-        // ===== 5. Заморозка базы с гистерезисом =====
-        if (absDelta > twistRollThreshold * 0.5f) {
+        // 4. Заморозка базы с гистерезисом
+        if (angleDeg > twistAngleThreshold * 0.45f) {
             baseFrozen = true
-        } else if (absDelta < twistRollThreshold * 0.2f) {
+        } else if (angleDeg < twistAngleThreshold * 0.2f) {
             baseFrozen = false
         }
-        if (!baseFrozen && rollSpeed < FREEZE_SPEED_THRESHOLD) {
-            baseRoll = BASE_ALPHA * roll + (1f - BASE_ALPHA) * baseRoll
+
+        if (!baseFrozen && isCleanGravity && angularSpeed < FREEZE_SPEED_THRESHOLD) {
+            adaptBase(nx, ny, nz)
         }
 
-        // ===== 6. Асимметрия: только «экран вниз» (deltaRoll < 0) =====
-        if (deltaRoll > 0f) {
-            // База «сбилась» (аномальное положение при SCREEN_ON, телефон «на боку»)
-            // — подтягиваем, чтобы deltaRoll вернулся к 0.
-            // Иначе асимметрия + baseFrozen заблокируют жесты навсегда («зависание»).
-            if (rollSpeed < FREEZE_SPEED_THRESHOLD) {
-                baseRoll = BASE_ALPHA * roll + (1f - BASE_ALPHA) * baseRoll
+        // 5. Направление: только экраном вниз (zDrop > 0).
+        // Если вверх/вбок (zDrop <= 0) — не жест, базу ПРИНУДИТЕЛЬНО подтягиваем
+        // БЕЗ angularSpeed (иначе шумный гироскоп блокирует подтяжку → «зависание»).
+        if (zDrop <= 0f) {
+            twistSinceMs = 0L
+            baseFrozen = false
+            if (isCleanGravity) {
+                adaptBase(nx, ny, nz)
             }
+            return null
+        }
+
+        // 6. При наклоне к себе/от себя (pitch) roll ~ 0 — не жест.
+        // При TWIST (поворот кисти) |roll| = 52..72.
+        if (abs(roll) < MIN_ABS_ROLL) {
             twistSinceMs = 0L
             return null
         }
 
-        // ===== 7. Проверка TWIST с гистерезисом =====
-        val upper = twistRollThreshold
-        val lower = twistRollThreshold * 0.2f
+        // 7. Проверка TWIST с гистерезисом
+        val upper = twistAngleThreshold
+        val lower = twistAngleThreshold * 0.2f
 
-        if (absDelta > upper) {
+        if (angleDeg > upper && zDrop >= MIN_Z_DROP) {
             if (twistSinceMs == 0L) {
                 twistSinceMs = now
                 if (BuildConfig.DEBUG && shouldLog()) {
-                    Log.d(TAG, "TWIST candidate: deltaRoll=$deltaRoll (threshold=$twistRollThreshold), roll=$roll, baseRoll=$baseRoll, az=$az")
+                    Log.d(TAG, "TWIST candidate: angle=${"%.1f".format(angleDeg)}° (thr=$upper°), zDrop=${"%.2f".format(zDrop)}, roll=${"%.1f".format(roll)}, az=$az")
                 }
             } else if (now - twistSinceMs >= TWIST_HOLD_MS) {
                 if (cooldownPassed()) {
                     if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "Gesture: TWIST, deltaRoll=$deltaRoll (threshold=$twistRollThreshold), roll=$roll, az=$az, pitch=$pitch, hold=${now - twistSinceMs}ms")
+                        Log.d(TAG, "Gesture: TWIST, angle=${"%.1f".format(angleDeg)}°, zDrop=${"%.2f".format(zDrop)}, roll=${"%.1f".format(roll)}, az=$az, hold=${now - twistSinceMs}ms")
                     }
                     twistSinceMs = 0L
                     return "TWIST"
                 }
                 return null
             }
-        } else if (absDelta < lower) {
+        } else if (angleDeg < lower || zDrop < MIN_Z_DROP * 0.5f) {
             if (twistSinceMs != 0L && BuildConfig.DEBUG && shouldLog()) {
-                Log.d(TAG, "TWIST cancelled: deltaRoll=$deltaRoll (threshold=$twistRollThreshold)")
+                Log.d(TAG, "TWIST cancelled: angle=${"%.1f".format(angleDeg)}°, zDrop=${"%.2f".format(zDrop)}")
             }
             twistSinceMs = 0L
         }
 
         return null
+    }
+
+    private fun adaptBase(nx: Float, ny: Float, nz: Float) {
+        val bx = BASE_ALPHA * nx + (1f - BASE_ALPHA) * baseGx
+        val by = BASE_ALPHA * ny + (1f - BASE_ALPHA) * baseGy
+        val bz = BASE_ALPHA * nz + (1f - BASE_ALPHA) * baseGz
+        val bMag = sqrt(bx * bx + by * by + bz * bz)
+        if (bMag > 0.001f) {
+            baseGx = bx / bMag
+            baseGy = by / bMag
+            baseGz = bz / bMag
+        }
+    }
+
+    private fun angleBetween(
+        x1: Float, y1: Float, z1: Float,
+        x2: Float, y2: Float, z2: Float
+    ): Float {
+        val dot = (x1 * x2 + y1 * y2 + z1 * z2).coerceIn(-1f, 1f)
+        return Math.toDegrees(acos(dot.toDouble())).toFloat()
     }
 
     private fun isHorizontalPhoto(): Boolean {
@@ -226,62 +259,67 @@ class GestureDetector(private val context: Context) {
         return true
     }
 
-    private fun calculateSpeed(window: CircularBuffer): Float {
+    private fun calculate3DAngularSpeed(window: VectorCircularBuffer): Float {
         if (window.size < 3) return 0f
         val n = window.size
-
         var accumulatedDegrees = 0f
         var totalTimeSec = 0f
-
         for (i in 1 until n) {
-            val prevVal = window.valueAt(i - 1)
-            val currVal = window.valueAt(i)
-
-            var diff = abs(currVal - prevVal)
-            if (diff > 180f) diff = 360f - diff
-
             val dtSec = (window.timestampAt(i) - window.timestampAt(i - 1)) / 1_000_000_000f
-
             if (dtSec in MIN_DT_SEC..MAX_DT_SEC) {
-                accumulatedDegrees += diff
+                val deg = angleBetween(
+                    window.xAt(i - 1), window.yAt(i - 1), window.zAt(i - 1),
+                    window.xAt(i), window.yAt(i), window.zAt(i)
+                )
+                accumulatedDegrees += deg
                 totalTimeSec += dtSec
             }
         }
-
         return if (totalTimeSec > 0f) accumulatedDegrees / totalTimeSec else 0f
     }
 
     fun clear() {
-        rollWindow.clear()
-        baseRollInitialized = false
-        baseRoll = 0f
+        vectorWindow.clear()
+        baseInitialized = false
+        baseGx = 0f
+        baseGy = 0f
+        baseGz = 1f
         baseFrozen = false
         twistSinceMs = 0L
-        // lastGestureTime НЕ сбрасываем — cooldown управляется через resetCooldown()
     }
 
     fun resetCooldown() {
         lastGestureTime = System.currentTimeMillis()
     }
+
+    /** Страховка при SCREEN_ON. */
+    fun resetBaseFrozen() {
+        baseFrozen = false
+    }
 }
 
-class CircularBuffer(private val capacity: Int) {
-    private val values = FloatArray(capacity)
+class VectorCircularBuffer(private val capacity: Int) {
+    private val xs = FloatArray(capacity)
+    private val ys = FloatArray(capacity)
+    private val zs = FloatArray(capacity)
     private val timestamps = LongArray(capacity)
     private var writeIndex = 0
     var size = 0
         private set
 
-    fun add(value: Float, timestampNs: Long) {
-        values[writeIndex] = value
+    fun add(x: Float, y: Float, z: Float, timestampNs: Long) {
+        xs[writeIndex] = x
+        ys[writeIndex] = y
+        zs[writeIndex] = z
         timestamps[writeIndex] = timestampNs
         writeIndex = (writeIndex + 1) % capacity
         if (size < capacity) size++
     }
 
-    fun valueAt(i: Int): Float = values[physicalIndex(i)]
+    fun xAt(i: Int): Float = xs[physicalIndex(i)]
+    fun yAt(i: Int): Float = ys[physicalIndex(i)]
+    fun zAt(i: Int): Float = zs[physicalIndex(i)]
     fun timestampAt(i: Int): Long = timestamps[physicalIndex(i)]
-    fun last(): Float = if (size == 0) 0f else values[(writeIndex - 1 + capacity) % capacity]
 
     private fun physicalIndex(i: Int): Int {
         val start = if (size < capacity) 0 else writeIndex
@@ -289,7 +327,9 @@ class CircularBuffer(private val capacity: Int) {
     }
 
     fun clear() {
-        values.fill(0f)
+        xs.fill(0f)
+        ys.fill(0f)
+        zs.fill(0f)
         timestamps.fill(0L)
         writeIndex = 0
         size = 0
