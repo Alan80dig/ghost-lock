@@ -25,9 +25,26 @@ class GestureDetector(private val context: Context) {
 
         private const val LOG_THROTTLE_MS = 500L
 
-        private const val TWIST_HOLD_MS = 100L
+        // Удержание жеста: портрет / альбомная хватка (|roll| > 45°)
+        private const val TWIST_HOLD_MS = 90L
+        private const val TWIST_HOLD_MS_SIDE = 80L
 
-        private const val MIN_Z_DROP = 0.35f
+        // Антидребезг сброса таймера (короткие провалы не сбрасывают жест)
+        private const val RESET_GRACE_MS = 180L
+
+        // Минимальное падение нормализованного Z (экраном к земле)
+        private const val MIN_Z_DROP = 0.60f
+
+        // Порог угла для альбомной хватки (портрет берётся из ползунка)
+        private const val TWIST_ANGLE_SIDE = 60.0f
+
+        // Порог roll, выше которого считаем «телефон на боку» (альбомная хватка)
+        private const val SIDE_HOLD_ROLL_THRESHOLD = 45.0f
+
+        // В момент СРАБАТЫВАНИЯ требуем az < этого значения (экран реально вниз).
+        // В кандидате этот фильтр НЕ применяется — иначе теряются жесты,
+        // которые стартуют при az ≈ 0 и докручиваются до az < -1 за время hold.
+        private const val MIN_AZ_AT_TRIGGER = -0.7f
 
         // При наклоне к себе/от себя (pitch) roll ~ 0 — не жест.
         // При повороте кисти (TWIST) |roll| = 52..72.
@@ -36,6 +53,9 @@ class GestureDetector(private val context: Context) {
         // При SCREEN_ON телефон может быть перевёрнут (az < 0) —
         // не инициализируем базу, ждём нормального положения.
         private const val MIN_AZ_FOR_BASE = -3f
+
+        // Строгая инициализация базы: только когда телефон явно экраном вверх.
+        private const val BASE_INIT_MIN_AZ = 3.0f
     }
 
     private var baseFrozen = false
@@ -93,6 +113,7 @@ class GestureDetector(private val context: Context) {
     private var baseInitialized = false
 
     private var twistSinceMs = 0L
+    private var resetCandidateSinceMs = 0L
 
     // Ползунок «Чувствительность»: level 0 → 85°, level 100 → 45°
     // level=50 → порог 65°
@@ -132,11 +153,19 @@ class GestureDetector(private val context: Context) {
 
         val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
 
-        // 1. Инициализация базового вектора (только в нормальном положении)
+        // 1. Инициализация базового вектора.
+        // Защита: не инициализируем, если телефон перевёрнут (az < MIN_AZ_FOR_BASE)
+        // или ещё не поднят экраном вверх (az < BASE_INIT_MIN_AZ).
         if (!baseInitialized) {
             if (az < MIN_AZ_FOR_BASE) {
                 if (BuildConfig.DEBUG && shouldLog()) {
                     Log.d(TAG, "Base 3D skipped (az=$az < $MIN_AZ_FOR_BASE, phone flipped)")
+                }
+                return null
+            }
+            if (az < BASE_INIT_MIN_AZ) {
+                if (BuildConfig.DEBUG && shouldLog()) {
+                    Log.d(TAG, "Base 3D skipped (az=$az < $BASE_INIT_MIN_AZ, phone not screen-up)")
                 }
                 return null
             }
@@ -163,10 +192,15 @@ class GestureDetector(private val context: Context) {
         val zDrop = baseGz - nz
         val now = System.currentTimeMillis()
 
-        // 4. Заморозка базы с гистерезисом
-        if (angleDeg > twistAngleThreshold * 0.45f) {
+        // 4. Адаптивные пороги в зависимости от хватки (roll)
+        val isSideHold = abs(roll) > SIDE_HOLD_ROLL_THRESHOLD
+        val effectiveUpper = if (isSideHold) TWIST_ANGLE_SIDE else twistAngleThreshold
+        val effectiveHoldMs = if (isSideHold) TWIST_HOLD_MS_SIDE else TWIST_HOLD_MS
+
+        // 5. Заморозка базы с гистерезисом
+        if (angleDeg > effectiveUpper * 0.45f) {
             baseFrozen = true
-        } else if (angleDeg < twistAngleThreshold * 0.2f) {
+        } else if (angleDeg < effectiveUpper * 0.2f) {
             baseFrozen = false
         }
 
@@ -174,11 +208,12 @@ class GestureDetector(private val context: Context) {
             adaptBase(nx, ny, nz)
         }
 
-        // 5. Направление: только экраном вниз (zDrop > 0).
+        // 6. Направление: только экраном вниз (zDrop > 0).
         // Если вверх/вбок (zDrop <= 0) — не жест, базу ПРИНУДИТЕЛЬНО подтягиваем
         // БЕЗ angularSpeed (иначе шумный гироскоп блокирует подтяжку → «зависание»).
         if (zDrop <= 0f) {
             twistSinceMs = 0L
+            resetCandidateSinceMs = 0L
             baseFrozen = false
             if (isCleanGravity) {
                 adaptBase(nx, ny, nz)
@@ -186,38 +221,59 @@ class GestureDetector(private val context: Context) {
             return null
         }
 
-        // 6. При наклоне к себе/от себя (pitch) roll ~ 0 — не жест.
+        // 7. При наклоне к себе/от себя (pitch) roll ~ 0 — не жест.
         // При TWIST (поворот кисти) |roll| = 52..72.
         if (abs(roll) < MIN_ABS_ROLL) {
             twistSinceMs = 0L
+            resetCandidateSinceMs = 0L
             return null
         }
 
-        // 7. Проверка TWIST с гистерезисом
-        val upper = twistAngleThreshold
-        val lower = twistAngleThreshold * 0.2f
+        // 8. Проверка TWIST с гистерезисом и антидребезгом сброса
+        val upper = effectiveUpper
+        val lower = effectiveUpper * 0.2f
 
+        // Кандидат: без az-фильтра (чтобы ловить жесты, стартующие при az ≈ 0)
         if (angleDeg > upper && zDrop >= MIN_Z_DROP) {
             if (twistSinceMs == 0L) {
                 twistSinceMs = now
+                resetCandidateSinceMs = 0L
                 if (BuildConfig.DEBUG && shouldLog()) {
-                    Log.d(TAG, "TWIST candidate: angle=${"%.1f".format(angleDeg)}° (thr=$upper°), zDrop=${"%.2f".format(zDrop)}, roll=${"%.1f".format(roll)}, az=$az")
+                    Log.d(TAG, "TWIST candidate: angle=${"%.1f".format(angleDeg)}° (thr=$upper°), " +
+                            "zDrop=${"%.2f".format(zDrop)}, roll=${"%.1f".format(roll)}, " +
+                            "az=$az, side=$isSideHold")
                 }
-            } else if (now - twistSinceMs >= TWIST_HOLD_MS) {
-                if (cooldownPassed()) {
+            } else if (now - twistSinceMs >= effectiveHoldMs) {
+                // Срабатывание: требуем az < MIN_AZ_AT_TRIGGER (экран реально вниз)
+                if (az < MIN_AZ_AT_TRIGGER && cooldownPassed()) {
                     if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "Gesture: TWIST, angle=${"%.1f".format(angleDeg)}°, zDrop=${"%.2f".format(zDrop)}, roll=${"%.1f".format(roll)}, az=$az, hold=${now - twistSinceMs}ms")
+                        Log.d(TAG, "Gesture: TWIST, angle=${"%.1f".format(angleDeg)}°, " +
+                                "zDrop=${"%.2f".format(zDrop)}, roll=${"%.1f".format(roll)}, " +
+                                "az=$az, hold=${now - twistSinceMs}ms, side=$isSideHold")
                     }
                     twistSinceMs = 0L
+                    resetCandidateSinceMs = 0L
                     return "TWIST"
                 }
-                return null
+                // Если az ещё не ушёл вниз — не сбрасываем таймер, ждём докрута
             }
         } else if (angleDeg < lower || zDrop < MIN_Z_DROP * 0.5f) {
-            if (twistSinceMs != 0L && BuildConfig.DEBUG && shouldLog()) {
-                Log.d(TAG, "TWIST cancelled: angle=${"%.1f".format(angleDeg)}°, zDrop=${"%.2f".format(zDrop)}")
+            // Антидребезг: не сбрасываем сразу, даём льготное окно
+            if (twistSinceMs != 0L) {
+                if (resetCandidateSinceMs == 0L) {
+                    resetCandidateSinceMs = now
+                } else if (now - resetCandidateSinceMs >= RESET_GRACE_MS) {
+                    if (BuildConfig.DEBUG && shouldLog()) {
+                        Log.d(TAG, "TWIST cancelled: angle=${"%.1f".format(angleDeg)}°, " +
+                                "zDrop=${"%.2f".format(zDrop)}")
+                    }
+                    twistSinceMs = 0L
+                    resetCandidateSinceMs = 0L
+                }
             }
-            twistSinceMs = 0L
+        } else {
+            // Вернулись в зону кандидата — отменяем сброс
+            resetCandidateSinceMs = 0L
         }
 
         return null
@@ -286,6 +342,7 @@ class GestureDetector(private val context: Context) {
         baseGz = 1f
         baseFrozen = false
         twistSinceMs = 0L
+        resetCandidateSinceMs = 0L
     }
 
     fun resetCooldown() {
