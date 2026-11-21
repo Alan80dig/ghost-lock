@@ -8,6 +8,7 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import kotlin.math.abs
 import kotlin.math.acos
+import kotlin.math.max
 import kotlin.math.sqrt
 
 class GestureDetector(private val context: Context) {
@@ -15,52 +16,42 @@ class GestureDetector(private val context: Context) {
     companion object {
         private const val TAG = "FlickLock"
         private const val CALL_CHECK_INTERVAL_MS = 2000L
-        private const val BUFFER_CAPACITY = 10
 
-        private const val BASE_ALPHA = 0.05f
-        private const val FREEZE_SPEED_THRESHOLD = 25f
+        // ===== Low-pass фильтр =====
+        private const val LP_ALPHA = 0.2f
+        private const val CLEAN_GRAVITY_MIN = 7.5f
+        private const val CLEAN_GRAVITY_MAX = 12.2f
 
-        private const val MIN_DT_SEC = 0.003f
-        private const val MAX_DT_SEC = 0.05f
+        // ===== Offset по позе =====
+        private const val OFFSET_MAX = 85f
+        private const val OFFSET_STABLE_SAMPLES = 8      // 8 стабильных сэмплов (~160 мс при 50 Гц)
+        private const val OFFSET_IDLE_SPEED = 20f        // °/сек — «покой»
+        private const val OFFSET_IDLE_TIME_MS = 3000L    // 3 сек покоя для обновления
+        private const val OFFSET_UPDATE_DELTA = 20f      // ° — порог обновления
+        private const val POKOY_ALPHA = 0.02f
 
-        private const val LOG_THROTTLE_MS = 500L
-
-        // Удержание жеста: портрет / альбомная хватка (|roll| > 45°)
-        private const val TWIST_HOLD_MS = 90L
-        private const val TWIST_HOLD_MS_SIDE = 80L
-
-        // Антидребезг сброса таймера (короткие провалы не сбрасывают жест)
-        private const val RESET_GRACE_MS = 180L
-
-        // Минимальное падение нормализованного Z (экраном к земле)
+        // ===== Пороги жеста (относительно позы) =====
+        private const val SLOW_ANGLE = 90f
+        private const val FAST_ANGLE_OFFSET = 25f
         private const val MIN_Z_DROP = 0.60f
 
-        // Порог угла для альбомной хватки (портрет берётся из ползунка)
-        private const val TWIST_ANGLE_SIDE = 60.0f
+        // ===== Скорость (по сырому акселерометру) =====
+        private const val MIN_PEAK_SPEED = 35f
+        private const val FAST_PEAK_SPEED = 160f
 
-        // Порог roll, выше которого считаем «телефон на боку» (альбомная хватка)
-        private const val SIDE_HOLD_ROLL_THRESHOLD = 45.0f
+        // ===== Удержание =====
+        private const val SLOW_HOLD_MS = 140L
+        private const val FAST_HOLD_MS = 70L
 
-        // В момент СРАБАТЫВАНИЯ требуем az < этого значения (экран реально вниз).
-        // В кандидате этот фильтр НЕ применяется — иначе теряются жесты,
-        // которые стартуют при az ≈ 0 и докручиваются до az < -1 за время hold.
-        private const val MIN_AZ_AT_TRIGGER = -0.7f
+        // ===== Антидребезг и cooldown =====
+        private const val RESET_GRACE_MS = 180L
+        private const val COOLDOWN_MS = 500L
 
-        // При наклоне к себе/от себя (pitch) roll ~ 0 — не жест.
-        // При повороте кисти (TWIST) |roll| = 52..72.
-        private const val MIN_ABS_ROLL = 15f
-
-        // При SCREEN_ON телефон может быть перевёрнут (az < 0) —
-        // не инициализируем базу, ждём нормального положения.
-        private const val MIN_AZ_FOR_BASE = -3f
-
-        // Строгая инициализация базы: только когда телефон явно экраном вверх.
-        private const val BASE_INIT_MIN_AZ = 3.0f
+        // ===== Лог =====
+        private const val LOG_THROTTLE_MS = 500L
     }
 
-    private var baseFrozen = false
     private var lastLogTime = 0L
-
     private fun shouldLog(): Boolean {
         val now = System.currentTimeMillis()
         if (now - lastLogTime < LOG_THROTTLE_MS) return false
@@ -104,34 +95,61 @@ class GestureDetector(private val context: Context) {
     }
     // ===== /isCallActive =====
 
-    // ===== 3D-вектор гравитации =====
-    private val vectorWindow = VectorCircularBuffer(BUFFER_CAPACITY)
+    // ===== Low-pass фильтр гравитации =====
+    private var gravX = 0f
+    private var gravY = 0f
+    private var gravZ = 0f
+    private var gravInitialized = false
 
-    private var baseGx = 0f
-    private var baseGy = 0f
-    private var baseGz = 1f
-    private var baseInitialized = false
+    // ===== Сырой вектор (для скорости) =====
+    private var prevRawNx = 0f
+    private var prevRawNy = 0f
+    private var prevRawNz = 1f
+    private var prevRawTimestampNs = 0L
 
-    private var twistSinceMs = 0L
+    // ===== Угол и скорость =====
+    private var prevAngle = -1f
+    private var prevTimestampNs = 0L
+
+    // ===== Offset по позе =====
+    private var offset = 0f
+    private var offsetPending = false
+    private var offsetStableCount = 0
+    private var idleSinceMs = 0L
+    private var anglePokoy = 0f
+    private var pokoyInitialized = false
+
+    // ===== Таймеры жеста =====
+    private var gestureSinceMs = 0L
     private var resetCandidateSinceMs = 0L
+    private var peakSpeed = 0f
 
-    // Ползунок «Чувствительность»: level 0 → 85°, level 100 → 45°
-    // level=50 → порог 65°
-    private var twistAngleThreshold = 65f
-
-    private var cooldownMs = 500L
     private var lastGestureTime = 0L
+
+    // ===== Ползунок чувствительности =====
+    private var slowAngleThreshold = SLOW_ANGLE
+    private var fastAngleThreshold = SLOW_ANGLE + FAST_ANGLE_OFFSET
 
     fun updateTwistSensitivity(level: Int) {
         val t = level.coerceIn(0, 100) / 100f
-        twistAngleThreshold = lerp(85f, 45f, t)
-
+        slowAngleThreshold = lerp(110f, 70f, t)
+        fastAngleThreshold = slowAngleThreshold + FAST_ANGLE_OFFSET
         if (BuildConfig.DEBUG) {
-            Log.d(TAG, "Twist sensitivity: level=$level, angleThreshold=$twistAngleThreshold")
+            Log.d(TAG, "Twist sensitivity: level=$level, slow=$slowAngleThreshold°, fast=$fastAngleThreshold°")
         }
     }
 
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
+    /** Вызывается из LockService при SCREEN_ON. */
+    fun onScreenOn() {
+        offsetPending = true
+        offsetStableCount = 0
+        idleSinceMs = 0L
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "onScreenOn: offset pending (${OFFSET_STABLE_SAMPLES} stable samples)")
+        }
+    }
 
     fun onSensorChanged(
         pitch: Float, roll: Float,
@@ -145,158 +163,159 @@ class GestureDetector(private val context: Context) {
         val magnitude = sqrt(ax * ax + ay * ay + az * az)
         if (magnitude < 1.0f) return null
 
-        val isCleanGravity = magnitude in 7.5f..12.2f
-
-        val nx = ax / magnitude
-        val ny = ay / magnitude
-        val nz = az / magnitude
-
+        val isCleanGravity = magnitude in CLEAN_GRAVITY_MIN..CLEAN_GRAVITY_MAX
         val actualTimestamp = if (timestampNs == 0L) System.nanoTime() else timestampNs
-
-        // 1. Инициализация базового вектора.
-        // Защита: не инициализируем, если телефон перевёрнут (az < MIN_AZ_FOR_BASE)
-        // или ещё не поднят экраном вверх (az < BASE_INIT_MIN_AZ).
-        if (!baseInitialized) {
-            if (az < MIN_AZ_FOR_BASE) {
-                if (BuildConfig.DEBUG && shouldLog()) {
-                    Log.d(TAG, "Base 3D skipped (az=$az < $MIN_AZ_FOR_BASE, phone flipped)")
-                }
-                return null
-            }
-            if (az < BASE_INIT_MIN_AZ) {
-                if (BuildConfig.DEBUG && shouldLog()) {
-                    Log.d(TAG, "Base 3D skipped (az=$az < $BASE_INIT_MIN_AZ, phone not screen-up)")
-                }
-                return null
-            }
-            baseGx = nx
-            baseGy = ny
-            baseGz = nz
-            baseInitialized = true
-            baseFrozen = false
-            vectorWindow.add(nx, ny, nz, actualTimestamp)
-            if (BuildConfig.DEBUG) {
-                Log.d(TAG, "Base 3D initialized: g=($baseGx, $baseGy, $baseGz), az=$az")
-            }
-            return null
-        }
-
-        vectorWindow.add(nx, ny, nz, actualTimestamp)
-        if (vectorWindow.size < 5) return null
-
-        // 2. Угловая скорость 3D (°/сек)
-        val angularSpeed = calculate3DAngularSpeed(vectorWindow)
-
-        // 3. Истинный 3D-угол и zDrop
-        val angleDeg = angleBetween(baseGx, baseGy, baseGz, nx, ny, nz)
-        val zDrop = baseGz - nz
         val now = System.currentTimeMillis()
 
-        // 4. Адаптивные пороги в зависимости от хватки (roll)
-        val isSideHold = abs(roll) > SIDE_HOLD_ROLL_THRESHOLD
-        val effectiveUpper = if (isSideHold) TWIST_ANGLE_SIDE else twistAngleThreshold
-        val effectiveHoldMs = if (isSideHold) TWIST_HOLD_MS_SIDE else TWIST_HOLD_MS
-
-        // 5. Заморозка базы с гистерезисом
-        if (angleDeg > effectiveUpper * 0.45f) {
-            baseFrozen = true
-        } else if (angleDeg < effectiveUpper * 0.2f) {
-            baseFrozen = false
+        // 1. Low-pass фильтр
+        if (!gravInitialized) {
+            if (!isCleanGravity) return null
+            gravX = ax; gravY = ay; gravZ = az
+            gravInitialized = true
+            prevRawNx = ax / magnitude
+            prevRawNy = ay / magnitude
+            prevRawNz = az / magnitude
+            prevRawTimestampNs = actualTimestamp
+            if (BuildConfig.DEBUG) Log.d(TAG, "Gravity initialized: g=($gravX, $gravY, $gravZ), az=$az")
+            return null
         }
 
-        if (!baseFrozen && isCleanGravity && angularSpeed < FREEZE_SPEED_THRESHOLD) {
-            adaptBase(nx, ny, nz)
+        if (isCleanGravity) {
+            gravX = LP_ALPHA * ax + (1f - LP_ALPHA) * gravX
+            gravY = LP_ALPHA * ay + (1f - LP_ALPHA) * gravY
+            gravZ = LP_ALPHA * az + (1f - LP_ALPHA) * gravZ
         }
 
-        // 6. Направление: только экраном вниз (zDrop > 0).
-        // Если вверх/вбок (zDrop <= 0) — не жест, базу ПРИНУДИТЕЛЬНО подтягиваем
-        // БЕЗ angularSpeed (иначе шумный гироскоп блокирует подтяжку → «зависание»).
-        if (zDrop <= 0f) {
-            twistSinceMs = 0L
-            resetCandidateSinceMs = 0L
-            baseFrozen = false
-            if (isCleanGravity) {
-                adaptBase(nx, ny, nz)
+        val gMag = sqrt(gravX * gravX + gravY * gravY + gravZ * gravZ)
+        if (gMag < 0.001f) return null
+        val nz = gravZ / gMag
+
+        // 2. Угол от горизонта
+        val angleDeg = Math.toDegrees(acos(nz.coerceIn(-1f, 1f).toDouble())).toFloat()
+
+        // 3. Скорость по СЫРОМУ акселерометру
+        var speed = 0f
+        if (prevRawTimestampNs != 0L && magnitude > 1f) {
+            val dtSec = (actualTimestamp - prevRawTimestampNs) / 1_000_000_000f
+            if (dtSec in 0.003f..0.2f) {
+                val rawNx = ax / magnitude
+                val rawNy = ay / magnitude
+                val rawNz = az / magnitude
+                val dot = (rawNx * prevRawNx + rawNy * prevRawNy + rawNz * prevRawNz).coerceIn(-1f, 1f)
+                val stepDeg = Math.toDegrees(acos(dot.toDouble())).toFloat()
+                speed = stepDeg / dtSec
             }
-            return null
+        }
+        prevRawNx = ax / magnitude
+        prevRawNy = ay / magnitude
+        prevRawNz = az / magnitude
+        prevRawTimestampNs = actualTimestamp
+
+        prevAngle = angleDeg
+        prevTimestampNs = actualTimestamp
+
+        // 4. Медленная адаптация angle_pokoy
+        if (speed < OFFSET_IDLE_SPEED) {
+            if (!pokoyInitialized) {
+                anglePokoy = angleDeg
+                pokoyInitialized = true
+            } else {
+                anglePokoy = POKOY_ALPHA * angleDeg + (1f - POKOY_ALPHA) * anglePokoy
+            }
+            if (idleSinceMs == 0L) idleSinceMs = now
+        } else {
+            idleSinceMs = 0L
         }
 
-        // 7. При наклоне к себе/от себя (pitch) roll ~ 0 — не жест.
-        // При TWIST (поворот кисти) |roll| = 52..72.
-        if (abs(roll) < MIN_ABS_ROLL) {
-            twistSinceMs = 0L
-            resetCandidateSinceMs = 0L
-            return null
+        // 5. Фиксация offset по стабильным сэмплам
+        if (offsetPending) {
+            if (speed < OFFSET_IDLE_SPEED) {
+                offsetStableCount++
+                if (offsetStableCount >= OFFSET_STABLE_SAMPLES) {
+                    offset = anglePokoy.coerceAtMost(OFFSET_MAX)
+                    offsetPending = false
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "Offset calibrated: $offset° (stable after $offsetStableCount samples)")
+                    }
+                }
+            } else {
+                offsetStableCount = 0  // сброс при рывке
+            }
         }
 
-        // 8. Проверка TWIST с гистерезисом и антидребезгом сброса
-        val upper = effectiveUpper
-        val lower = effectiveUpper * 0.2f
+        // 6. Обновление offset при длительном покое
+        if (!offsetPending && idleSinceMs != 0L && now - idleSinceMs >= OFFSET_IDLE_TIME_MS) {
+            val candidate = anglePokoy.coerceAtMost(OFFSET_MAX)
+            if (abs(candidate - offset) > OFFSET_UPDATE_DELTA) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "Offset updated: $offset° → $candidate° (pose changed)")
+                }
+                offset = candidate
+            }
+        }
 
-        // Кандидат: без az-фильтра (чтобы ловить жесты, стартующие при az ≈ 0)
-        if (angleDeg > upper && zDrop >= MIN_Z_DROP) {
-            if (twistSinceMs == 0L) {
-                twistSinceMs = now
+        // 7. Проверка жеста
+        val effectiveAngle = angleDeg - offset
+        val slowThr = minOf(slowAngleThreshold, 180f - offset - 10f)
+        val fastThr = slowThr + FAST_ANGLE_OFFSET
+        val zDrop = 1f - nz
+
+        // 7a. Накапливаем peakSpeed ДО проверки candidate
+        if (effectiveAngle > 30f) {
+            peakSpeed = max(peakSpeed, speed)
+        }
+
+        val isFast = peakSpeed >= FAST_PEAK_SPEED
+        val requiredAngle = if (isFast) fastThr else slowThr
+        val requiredHoldMs = if (isFast) FAST_HOLD_MS else SLOW_HOLD_MS
+
+        val candidate = effectiveAngle >= requiredAngle &&
+                zDrop >= MIN_Z_DROP &&
+                peakSpeed >= MIN_PEAK_SPEED
+
+        if (candidate) {
+            if (gestureSinceMs == 0L) {
+                gestureSinceMs = now
                 resetCandidateSinceMs = 0L
                 if (BuildConfig.DEBUG && shouldLog()) {
-                    Log.d(TAG, "TWIST candidate: angle=${"%.1f".format(angleDeg)}° (thr=$upper°), " +
-                            "zDrop=${"%.2f".format(zDrop)}, roll=${"%.1f".format(roll)}, " +
-                            "az=$az, side=$isSideHold")
+                    Log.d(TAG, "TWIST candidate (${if (isFast) "fast" else "slow"}): " +
+                            "angle=${"%.1f".format(angleDeg)}°, offset=${"%.1f".format(offset)}°, " +
+                            "effective=${"%.1f".format(effectiveAngle)}° (thr=$requiredAngle°), " +
+                            "peakSpeed=${"%.0f".format(peakSpeed)}°/s, zDrop=${"%.2f".format(zDrop)}")
                 }
-            } else if (now - twistSinceMs >= effectiveHoldMs) {
-                // Срабатывание: требуем az < MIN_AZ_AT_TRIGGER (экран реально вниз)
-                if (az < MIN_AZ_AT_TRIGGER && cooldownPassed()) {
+            } else if (now - gestureSinceMs >= requiredHoldMs) {
+                if (cooldownPassed()) {
                     if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "Gesture: TWIST, angle=${"%.1f".format(angleDeg)}°, " +
-                                "zDrop=${"%.2f".format(zDrop)}, roll=${"%.1f".format(roll)}, " +
-                                "az=$az, hold=${now - twistSinceMs}ms, side=$isSideHold")
+                        Log.d(TAG, "Gesture: TWIST (${if (isFast) "fast" else "slow"}), " +
+                                "angle=${"%.1f".format(angleDeg)}°, offset=${"%.1f".format(offset)}°, " +
+                                "effective=${"%.1f".format(effectiveAngle)}°, " +
+                                "peakSpeed=${"%.0f".format(peakSpeed)}°/s, " +
+                                "hold=${now - gestureSinceMs}ms")
                     }
-                    twistSinceMs = 0L
+                    gestureSinceMs = 0L
                     resetCandidateSinceMs = 0L
+                    peakSpeed = 0f
+                    offset = 0f
                     return "TWIST"
                 }
-                // Если az ещё не ушёл вниз — не сбрасываем таймер, ждём докрута
             }
-        } else if (angleDeg < lower || zDrop < MIN_Z_DROP * 0.5f) {
-            // Антидребезг: не сбрасываем сразу, даём льготное окно
-            if (twistSinceMs != 0L) {
+        } else {
+            if (gestureSinceMs != 0L) {
                 if (resetCandidateSinceMs == 0L) {
                     resetCandidateSinceMs = now
                 } else if (now - resetCandidateSinceMs >= RESET_GRACE_MS) {
                     if (BuildConfig.DEBUG && shouldLog()) {
                         Log.d(TAG, "TWIST cancelled: angle=${"%.1f".format(angleDeg)}°, " +
-                                "zDrop=${"%.2f".format(zDrop)}")
+                                "effective=${"%.1f".format(effectiveAngle)}°, speed=${"%.0f".format(speed)}°/s")
                     }
-                    twistSinceMs = 0L
+                    gestureSinceMs = 0L
                     resetCandidateSinceMs = 0L
+                    peakSpeed = 0f
                 }
             }
-        } else {
-            // Вернулись в зону кандидата — отменяем сброс
-            resetCandidateSinceMs = 0L
         }
 
         return null
-    }
-
-    private fun adaptBase(nx: Float, ny: Float, nz: Float) {
-        val bx = BASE_ALPHA * nx + (1f - BASE_ALPHA) * baseGx
-        val by = BASE_ALPHA * ny + (1f - BASE_ALPHA) * baseGy
-        val bz = BASE_ALPHA * nz + (1f - BASE_ALPHA) * baseGz
-        val bMag = sqrt(bx * bx + by * by + bz * bz)
-        if (bMag > 0.001f) {
-            baseGx = bx / bMag
-            baseGy = by / bMag
-            baseGz = bz / bMag
-        }
-    }
-
-    private fun angleBetween(
-        x1: Float, y1: Float, z1: Float,
-        x2: Float, y2: Float, z2: Float
-    ): Float {
-        val dot = (x1 * x2 + y1 * y2 + z1 * z2).coerceIn(-1f, 1f)
-        return Math.toDegrees(acos(dot.toDouble())).toFloat()
     }
 
     private fun isHorizontalPhoto(): Boolean {
@@ -310,85 +329,36 @@ class GestureDetector(private val context: Context) {
 
     private fun cooldownPassed(): Boolean {
         val now = System.currentTimeMillis()
-        if (now - lastGestureTime < cooldownMs) return false
+        if (now - lastGestureTime < COOLDOWN_MS) return false
         lastGestureTime = now
         return true
     }
 
-    private fun calculate3DAngularSpeed(window: VectorCircularBuffer): Float {
-        if (window.size < 3) return 0f
-        val n = window.size
-        var accumulatedDegrees = 0f
-        var totalTimeSec = 0f
-        for (i in 1 until n) {
-            val dtSec = (window.timestampAt(i) - window.timestampAt(i - 1)) / 1_000_000_000f
-            if (dtSec in MIN_DT_SEC..MAX_DT_SEC) {
-                val deg = angleBetween(
-                    window.xAt(i - 1), window.yAt(i - 1), window.zAt(i - 1),
-                    window.xAt(i), window.yAt(i), window.zAt(i)
-                )
-                accumulatedDegrees += deg
-                totalTimeSec += dtSec
-            }
-        }
-        return if (totalTimeSec > 0f) accumulatedDegrees / totalTimeSec else 0f
-    }
-
     fun clear() {
-        vectorWindow.clear()
-        baseInitialized = false
-        baseGx = 0f
-        baseGy = 0f
-        baseGz = 1f
-        baseFrozen = false
-        twistSinceMs = 0L
+        gravX = 0f; gravY = 0f; gravZ = 0f
+        gravInitialized = false
+        prevRawNx = 0f; prevRawNy = 0f; prevRawNz = 1f
+        prevRawTimestampNs = 0L
+        prevAngle = -1f
+        prevTimestampNs = 0L
+        offset = 0f
+        offsetPending = false
+        offsetStableCount = 0
+        idleSinceMs = 0L
+        anglePokoy = 0f
+        pokoyInitialized = false
+        gestureSinceMs = 0L
         resetCandidateSinceMs = 0L
+        peakSpeed = 0f
+        if (BuildConfig.DEBUG) Log.d(TAG, "clear: all state reset")
     }
 
     fun resetCooldown() {
         lastGestureTime = System.currentTimeMillis()
     }
 
-    /** Страховка при SCREEN_ON. */
+    /** Страховка при SCREEN_ON / перезапуске сервиса. */
     fun resetBaseFrozen() {
-        baseFrozen = false
-    }
-}
-
-class VectorCircularBuffer(private val capacity: Int) {
-    private val xs = FloatArray(capacity)
-    private val ys = FloatArray(capacity)
-    private val zs = FloatArray(capacity)
-    private val timestamps = LongArray(capacity)
-    private var writeIndex = 0
-    var size = 0
-        private set
-
-    fun add(x: Float, y: Float, z: Float, timestampNs: Long) {
-        xs[writeIndex] = x
-        ys[writeIndex] = y
-        zs[writeIndex] = z
-        timestamps[writeIndex] = timestampNs
-        writeIndex = (writeIndex + 1) % capacity
-        if (size < capacity) size++
-    }
-
-    fun xAt(i: Int): Float = xs[physicalIndex(i)]
-    fun yAt(i: Int): Float = ys[physicalIndex(i)]
-    fun zAt(i: Int): Float = zs[physicalIndex(i)]
-    fun timestampAt(i: Int): Long = timestamps[physicalIndex(i)]
-
-    private fun physicalIndex(i: Int): Int {
-        val start = if (size < capacity) 0 else writeIndex
-        return (start + i) % capacity
-    }
-
-    fun clear() {
-        xs.fill(0f)
-        ys.fill(0f)
-        zs.fill(0f)
-        timestamps.fill(0L)
-        writeIndex = 0
-        size = 0
+        clear()
     }
 }
