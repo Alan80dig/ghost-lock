@@ -261,8 +261,11 @@ class GestureDetector(private val context: Context) {
         val zDrop = 1f - nz
 
         // 7a. Накапливаем peakSpeed ДО проверки candidate
-        if (effectiveAngle > 30f) {
+        val gestureActive = effectiveAngle > slowThr * 0.5f && zDrop >= MIN_Z_DROP
+        if (gestureActive) {
             peakSpeed = max(peakSpeed, speed)
+        } else if (effectiveAngle < 20f) {
+            peakSpeed = 0f
         }
 
         val isFast = peakSpeed >= FAST_PEAK_SPEED
