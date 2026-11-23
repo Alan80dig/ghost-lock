@@ -23,19 +23,19 @@ class GestureDetector(private val context: Context) {
         private const val CLEAN_GRAVITY_MAX = 12.2f
 
         // ===== Offset по позе =====
-        private const val OFFSET_MAX = 85f
-        private const val OFFSET_STABLE_SAMPLES = 8      // 8 стабильных сэмплов (~160 мс при 50 Гц)
-        private const val OFFSET_IDLE_SPEED = 20f        // °/сек — «покой»
-        private const val OFFSET_IDLE_TIME_MS = 3000L    // 3 сек покоя для обновления
-        private const val OFFSET_UPDATE_DELTA = 20f      // ° — порог обновления
+        private const val OFFSET_MAX = 70f              // было 85° — снижено
+        private const val OFFSET_STABLE_SAMPLES = 8
+        private const val OFFSET_IDLE_SPEED = 20f
+        private const val OFFSET_IDLE_TIME_MS = 3000L
+        private const val OFFSET_UPDATE_DELTA = 20f
         private const val POKOY_ALPHA = 0.02f
 
-        // ===== Пороги жеста (относительно позы) =====
+        // ===== Пороги жеста =====
         private const val SLOW_ANGLE = 90f
         private const val FAST_ANGLE_OFFSET = 25f
         private const val MIN_Z_DROP = 0.60f
 
-        // ===== Скорость (по сырому акселерометру) =====
+        // ===== Скорость =====
         private const val MIN_PEAK_SPEED = 35f
         private const val FAST_PEAK_SPEED = 160f
 
@@ -107,7 +107,7 @@ class GestureDetector(private val context: Context) {
     private var prevRawNz = 1f
     private var prevRawTimestampNs = 0L
 
-    // ===== Угол и скорость =====
+    // ===== Угол =====
     private var prevAngle = -1f
     private var prevTimestampNs = 0L
 
@@ -239,7 +239,7 @@ class GestureDetector(private val context: Context) {
                     }
                 }
             } else {
-                offsetStableCount = 0  // сброс при рывке
+                offsetStableCount = 0
             }
         }
 
@@ -257,14 +257,15 @@ class GestureDetector(private val context: Context) {
         // 7. Проверка жеста
         val effectiveAngle = angleDeg - offset
         val slowThr = minOf(slowAngleThreshold, 180f - offset - 10f)
-        val fastThr = slowThr + FAST_ANGLE_OFFSET
+        val fastThr = minOf(slowThr + FAST_ANGLE_OFFSET, 180f - offset - 15f)  // ограничение сверху
         val zDrop = 1f - nz
 
-        // 7a. Накапливаем peakSpeed ДО проверки candidate
-        val gestureActive = effectiveAngle > slowThr * 0.5f && zDrop >= MIN_Z_DROP
+        // 7a. Накапливаем peakSpeed только когда жест реально начался
+        // nz < 0.6 — телефон пошёл на опрокидывание, пик скорости ещё не потерян
+        val gestureActive = effectiveAngle > slowThr * 0.5f && nz < 0.6f
         if (gestureActive) {
             peakSpeed = max(peakSpeed, speed)
-        } else if (effectiveAngle < 20f) {
+        } else if (effectiveAngle < slowThr * 0.5f) {
             peakSpeed = 0f
         }
 
@@ -274,7 +275,7 @@ class GestureDetector(private val context: Context) {
 
         val candidate = effectiveAngle >= requiredAngle &&
                 zDrop >= MIN_Z_DROP &&
-                peakSpeed >= MIN_PEAK_SPEED
+                peakSpeed >= MIN_PEAK_SPEED        
 
         if (candidate) {
             if (gestureSinceMs == 0L) {
