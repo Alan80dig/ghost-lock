@@ -32,7 +32,7 @@ class GestureDetector(private val context: Context) {
 
         // ===== Пороги жеста =====
         private const val SLOW_ANGLE = 90f
-        private const val FAST_ANGLE_OFFSET = 25f
+        private const val FAST_ANGLE_OFFSET = 10f
         private const val MIN_Z_DROP = 0.60f
 
         // ===== Скорость =====
@@ -41,7 +41,7 @@ class GestureDetector(private val context: Context) {
 
         // ===== Удержание =====
         private const val SLOW_HOLD_MS = 140L
-        private const val FAST_HOLD_MS = 70L
+        private const val FAST_HOLD_MS = 40L
 
         // ===== Антидребезг и cooldown =====
         private const val RESET_GRACE_MS = 180L
